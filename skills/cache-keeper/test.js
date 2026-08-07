@@ -42,6 +42,9 @@ async function main() {
 
   // --- 4. P2P: ответ публикует peer, ask() должен найти его по IPFS и заплатить ---
   console.log('\n=== P2P test ===');
+  // 5.2: известные авторы регистрируются в балансах (иначе платёж уходит на network_reward)
+  keeper.ensureAgent('peer-A', 0);
+  keeper.ensureAgent('peer-B', 0);
   const q4 = 'Какие бывают виды релейной защиты и автоматики на подстанциях?';
   const cid = await keeper.ipfs.dag.put({
     question_hash: keeper.hash(q4), question: q4,

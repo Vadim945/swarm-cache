@@ -15,12 +15,13 @@ const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const sqliteVec = require('sqlite-vec');
 const { pipeline } = require('@xenova/transformers');
+const { LightningEmulator, OWN_AGENT, NETWORK_REWARD_ACCOUNT } = require('./lightning-emulator.js');
 
 const EMBED_DIM = 384;
 const SIM_THRESHOLD = 0.92;
 const PUBSUB_TOPIC = 'swarm-cache';
 const IPFS_URL = process.env.IPFS_URL || 'http://127.0.0.1:5001';
-const LOCAL_AGENT = 'local';
+const LOCAL_AGENT = OWN_AGENT;
 
 class CacheKeeper {
   constructor(opts = {}) {
@@ -29,10 +30,13 @@ class CacheKeeper {
     this.logPath = opts.logPath || path.join(this.dir, 'payments.log');
     this.threshold = opts.threshold ?? SIM_THRESHOLD;
     this.modelName = opts.model || 'Xenova/all-MiniLM-L6-v2';
+    this.onMessage = opts.onMessage || null; // хук для тестов/интеграции: вызывается после обработки pubsub-сообщения
     this.embedder = null;
     this.ipfs = null;
     this.p2pEnabled = false;
+    this.ln = null;
     this._db = null;
+    this._seenQhashes = new Set(); // синхронный барьер дедупликации входящих pubsub-сообщений
   }
 
   /* ---------- lifecycle ---------- */
@@ -40,7 +44,8 @@ class CacheKeeper {
   async init() {
     this._openDb();
     this._ensureSchema();
-    this._ensureAgents();
+    // L402-эмулятор (Фаза 5): балансы + журнал платежей
+    this.ln = new LightningEmulator(this._db, this.logPath);
     // Локальная модель эмбеддингов (приоритет — по ТЗ)
     try {
       this.embedder = await pipeline('feature-extraction', this.modelName);
@@ -98,31 +103,13 @@ class CacheKeeper {
       CREATE VIRTUAL TABLE IF NOT EXISTS vec_cache USING vec0(
         embedding float[${EMBED_DIM}] distance_metric=cosine
       );
-      CREATE TABLE IF NOT EXISTS balances (
-        agent TEXT PRIMARY KEY,
-        balance INTEGER NOT NULL
-      );
       CREATE TABLE IF NOT EXISTS ipfs_index (
         qhash TEXT PRIMARY KEY,
         cid TEXT,
         agent TEXT,
         created_at INTEGER
       );
-      CREATE TABLE IF NOT EXISTS tx_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ts INTEGER,
-        from_agent TEXT,
-        to_agent TEXT,
-        sats INTEGER,
-        note TEXT
-      );
     `);
-  }
-
-  _ensureAgents() {
-    for (const [a, initial] of [[LOCAL_AGENT, 1000], ['peer-A', 0], ['peer-B', 0]]) {
-      this._db.prepare('INSERT OR IGNORE INTO balances (agent, balance) VALUES (?, ?)').run(a, initial);
-    }
   }
 
   /* ---------- embeddings ---------- */
@@ -187,7 +174,8 @@ class CacheKeeper {
     const p2p = await this.p2pLookup(qhash);
     if (p2p) {
       this.addToCache(question, p2p.answer, emb, { source: 'p2p', agent: p2p.agent });
-      const payment = this.pay(LOCAL_AGENT, p2p.agent, 1, 'p2p cache hit');
+      // 5.2: платим автору 1 сатоши (или network_reward, если автор неизвестен)
+      const payment = this.ln.payToAuthor(p2p.agent, 1, 'p2p cache hit');
       return {
         answer: p2p.answer, cached: true, p2p: true,
         source: 'p2p', agent: p2p.agent, payment,
@@ -230,26 +218,41 @@ class CacheKeeper {
     let parsed;
     try { parsed = JSON.parse(new TextDecoder().decode(msg.data)); } catch { return; }
     if (!parsed) return;
-    // kubo не доставляет свои же сообщения, но защита от циклов не помешает
-    if (parsed.agent === LOCAL_AGENT) return;
+    // Игнорируем свои же сообщения: kubo может вернуть эхо при нескольких соединениях между узлами.
+    // Идентификатор автора в сообщении = peerId узла-отправителя (уникален), LOCAL_AGENT — для совместимости.
+    if (parsed.agent === this._peerId || parsed.agent === LOCAL_AGENT) return;
     await this.handlePeerMessage(parsed);
+    if (this.onMessage) {
+      try { await this.onMessage(parsed); } catch (e) { this._log('⚠ onMessage hook: ' + e.message); }
+    }
   }
 
   async handlePeerMessage({ question_hash, answer_cid, agent = 'peer' }) {
     if (!question_hash || !answer_cid) return { ok: false, reason: 'bad message' };
+    // Синхронный барьер: JS однопоточен, поэтому Set-проверка на входе исключает гонку
+    // при одновременной доставке дубликатов pubsub-сообщения
+    if (this._seenQhashes.has(question_hash)) {
+      return { ok: true, duplicate: true, payment: { ok: true, sats: 0, note: 'duplicate, already processed' } };
+    }
+    this._seenQhashes.add(question_hash);
     try {
+      // Дедупликация по БД: платим и кэшируем только первое получение (актуально после перезапуска)
+      const existing = this._db.prepare('SELECT id FROM cache WHERE qhash = ?').get(question_hash);
       const data = await this.ipfs.dag.get(this.CID.parse(answer_cid));
       const val = data.value || data;
       if (!val || val.question_hash !== question_hash || !val.answer) {
         return { ok: false, reason: 'hash mismatch' };
       }
-      const existing = this._db.prepare('SELECT id FROM cache WHERE qhash = ?').get(question_hash);
       if (!existing && val.question) {
         const emb = await this.embed(val.question);
         this.addToCache(val.question, val.answer, emb, { source: 'p2p', agent });
       }
-      // L402: платим автору 1 сатоши за полученный ответ
-      const pay = this.pay(LOCAL_AGENT, agent, 1, 'p2p answer reward');
+      // 5.2: автор представился в pubsub — регистрируем его, чтобы платёж шёл ему напрямую
+      this.ln.ensureAgent(agent, 0);
+      // L402: платим 1 сатоши только за новое получение (5.2); дубликаты не тарифицируются
+      const pay = existing
+        ? { ok: true, from: LOCAL_AGENT, to: agent, sats: 0, note: 'p2p duplicate, already paid', duplicate: true }
+        : this.ln.payToAuthor(agent, 1, 'p2p answer reward');
       return { ok: true, payment: pay };
     } catch (e) {
       this._log('⚠ handlePeerMessage: ' + e.message);
@@ -276,42 +279,32 @@ class CacheKeeper {
   async publishP2P(qhash, question, answer) {
     if (!this.p2pEnabled) return null;
     const cid = await this.ipfs.dag.put({
-      question_hash: qhash, question, answer, agent: LOCAL_AGENT, ts: Date.now(),
+      question_hash: qhash, question, answer, agent: this._peerId, ts: Date.now(),
     });
     this._db.prepare('INSERT OR REPLACE INTO ipfs_index (qhash, cid, agent, created_at) VALUES (?,?,?,?)')
-      .run(qhash, cid.toString(), LOCAL_AGENT, Date.now());
+      .run(qhash, cid.toString(), this._peerId, Date.now());
     await this.ipfs.pubsub.publish(PUBSUB_TOPIC, new TextEncoder().encode(JSON.stringify({
-      question_hash: qhash, answer_cid: cid.toString(), agent: LOCAL_AGENT,
+      question_hash: qhash, answer_cid: cid.toString(), agent: this._peerId,
     })));
     return cid.toString();
   }
 
-  /* ---------- payments (L402 эмуляция) ---------- */
+  /* ---------- payments (делегируется lightning-emulator, Фаза 5) ---------- */
 
   ensureAgent(agent, initial = 0) {
-    this._db.prepare('INSERT OR IGNORE INTO balances (agent, balance) VALUES (?, ?)').run(agent, initial);
+    this.ln.ensureAgent(agent, initial);
   }
 
   balance(agent) {
-    const r = this._db.prepare('SELECT balance FROM balances WHERE agent = ?').get(agent);
-    return r ? r.balance : null;
+    return this.ln.getBalance(agent);
   }
 
   pay(from, to, sats, note) {
-    const row = this._db.prepare('SELECT balance FROM balances WHERE agent = ?').get(from);
-    if (!row) return { ok: false, reason: 'unknown sender: ' + from };
-    if (row.balance < sats) {
-      return { ok: false, reason: 'insufficient balance', from, to, sats, balance: row.balance };
-    }
-    const tx = this._db.transaction(() => {
-      this._db.prepare('UPDATE balances SET balance = balance - ? WHERE agent = ?').run(sats, from);
-      this._db.prepare('UPDATE balances SET balance = balance + ? WHERE agent = ?').run(sats, to);
-      this._db.prepare('INSERT INTO tx_log (ts, from_agent, to_agent, sats, note) VALUES (?,?,?,?,?)')
-        .run(Date.now(), from, to, sats, note);
-    });
-    tx();
-    this._appendLog(`${new Date().toISOString()} | ${from} -> ${to} | ${sats} sat | ${note}`);
-    return { ok: true, from, to, sats, note };
+    return this.ln.pay(from, to, sats, note);
+  }
+
+  payToAuthor(author, sats, note) {
+    return this.ln.payToAuthor(author, sats, note);
   }
 
   /* ---------- helpers ---------- */
@@ -319,15 +312,13 @@ class CacheKeeper {
   stats() {
     const cacheCount = this._db.prepare('SELECT COUNT(*) c FROM cache').get().c;
     const p2pCount = this._db.prepare("SELECT COUNT(*) c FROM cache WHERE source = 'p2p'").get().c;
-    const txCount = this._db.prepare('SELECT COUNT(*) c FROM tx_log').get().c;
-    const balances = this._db.prepare('SELECT agent, balance FROM balances ORDER BY agent').all();
     const published = this._db.prepare('SELECT COUNT(*) c FROM ipfs_index').get().c;
     return {
       cacheSize: cacheCount,
       p2pEntries: p2pCount,
-      txCount,
+      txCount: this.ln.txCount(),
       publishedCids: published,
-      balances,
+      balances: this.ln.allBalances(),
       p2pEnabled: this.p2pEnabled,
       peerId: this.p2pEnabled ? (this._peerId || null) : null,
       threshold: this.threshold,
