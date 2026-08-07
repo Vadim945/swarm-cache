@@ -32,6 +32,24 @@
 - thinking: {type:disabled} — снижает reasoning-токены (127→37 на тесте).
 - Провайдер в ответе: provider=timeweb-deepseek-v4-flash.
 
+=== ДВА АГЕНТА НА ОДНОМ ХОСТЕ (замена кросс-VPS тесту 7.4) ===
+Второй VPS не понадобился: два независимых агента работают как две «машины» роя
+(каждый со своей kubo-нодой, БД, балансом и peerId):
+- Агент A: systemd swarm-cache.service, IPFS 127.0.0.1:5001, HTTP :3333, peer 12D3KooWDAG...
+- Агент B: systemd swarm-cache-b.service, IPFS 127.0.0.1:5002, HTTP :3334, peer 12D3KooWSfWx...
+- Оба подписаны на pubsub топик swarm-cache (проверено: pubsub ls на обеих нодах).
+
+Кросс-агентные тесты (реальный LLM, реальный pubsub-обмен):
+- A генерирует «dropout» (605 ток., 5.3с) → B получает через P2P: 9 мс, source=p2p
+- B генерирует «learning rate» (1136 ток., 8.9с) → A получает через P2P: 18 мс, source=p2p
+- Платежи (эмулятор L402): A заплатил B 2 сат, B заплатил A 1 сат (txCount A=2, B=1).
+- Балансы итог: A local=998, B local=999, у каждого peer-баланс партнёра.
+
+Исправлен баг надёжности: kubo «терял» HTTP-подписку pubsub у долгоживущего агента A
+(подписка есть при старте, потом умирала → агент не получал P2P-сообщения).
+Добавлен watchdog: каждые 30 с проверка pubsub.ls и автопереподписка. После фикса
+кросс-агентный обмен работает стабильно в обе стороны.
+
 === ЖИВОЙ СЕРВИС (претворено в жизнь) ===
 - HTTP API: POST /ask, GET /balance, GET /stats, GET /health — http://127.0.0.1:3333 (agent.js, Express).
 - systemd: swarm-cache.service (автозапуск, Restart=always, After=docker) — активен.

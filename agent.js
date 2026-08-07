@@ -20,6 +20,7 @@ async function main() {
   const keeper = await new CacheKeeper({
     model: process.env.EMBED_MODEL || 'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
     threshold: Number(process.env.SIM_THRESHOLD || 0.70),
+    dbPath: process.env.SWARM_DB ? path.resolve(process.env.SWARM_DB) : undefined,
   }).init();
 
   const app = express();

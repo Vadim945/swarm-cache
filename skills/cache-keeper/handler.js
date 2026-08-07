@@ -69,6 +69,10 @@ class CacheKeeper {
       this.p2pEnabled = true;
       this._subscribe();
       this._log('✅ IPFS connected, pubsub topic: ' + PUBSUB_TOPIC);
+      // Watchdog: kubo может "терять" HTTP-подписку (например, после перезапуска ноды
+      // или обрыва стрима) — каждые 30 с проверяем и переподписываемся.
+      this._subscriptionTimer = setInterval(() => this._resubscribeIfNeeded(), 30000);
+      this._subscriptionTimer.unref?.();
     } catch (e) {
       this.p2pEnabled = false;
       this._log('⚠ IPFS недоступен, P2P отключён: ' + e.message);
@@ -253,6 +257,21 @@ class CacheKeeper {
     this.ipfs.pubsub.subscribe(PUBSUB_TOPIC, (msg) => {
       this._onPubsub(msg).catch((e) => this._log('⚠ pubsub handler: ' + e.message));
     }).catch((e) => this._log('⚠ subscribe failed: ' + e.message));
+  }
+
+  // Проверяет, жива ли подписка, и переподписывается, если kubo её потерял
+  async _resubscribeIfNeeded() {
+    try {
+      if (!this.p2pEnabled || !this.ipfs) return;
+      const ls = await this.ipfs.pubsub.ls();
+      const topics = Array.isArray(ls) ? ls : (ls && ls.Strings) || [];
+      if (!topics.includes(PUBSUB_TOPIC)) {
+        this._log('⚠ pubsub подписка потеряна, переподписываюсь на ' + PUBSUB_TOPIC);
+        this._subscribe();
+      }
+    } catch (e) {
+      this._log('⚠ pubsub watchdog: ' + e.message);
+    }
   }
 
   async _onPubsub(msg) {
