@@ -18,6 +18,20 @@
   (ClawHub CLI не найден; пакет @openclaw/clawhub отсутствует в npm, E404 → публикация в локальный Git по 6.4)
 - Вывод: прототип полностью работоспособен ✅
 
+=== РЕАЛЬНЫЙ LLM ПОДКЛЮЧЁН (TimeWeb Cloud DeepSeek V4 Flash) ===
+- Endpoint: https://api.timeweb.ai/v1/chat/completions (OpenAI-совместимый), модель deepseek/deepseek-v4-flash.
+- Ключ: LLM_API_KEY в .env (chmod 600, в .gitignore). Источник — apiKey провайдера custom-agent-timeweb-cloud
+  из конфига OpenClaw (тот же аккаунт TimeWeb Cloud; JWT-ключ Вадима не подошёл ни к timeweb, ни к deepseek.com).
+- Честные метрики (usage из API):
+  · Новый вопрос «Что такое градиентный спуск?»: 653 токена, 4249 мс (реальный LLM)
+  · Новый вопрос про Attention: 753 токена, 5673 мс
+  · Повтор: 0 токенов, 17-19 мс (кэш, sim=1.0)
+  · Семантический близнец: 0 токенов, 12 мс (кэш, sim=0.7185)
+  · Экономия: каждый повторный/близкий запрос экономит ~650-750 токенов (100%);
+    на серии из 10 запросов с 2-3 уникальными экономия ~70-80% токенов.
+- thinking: {type:disabled} — снижает reasoning-токены (127→37 на тесте).
+- Провайдер в ответе: provider=timeweb-deepseek-v4-flash.
+
 === ЖИВОЙ СЕРВИС (претворено в жизнь) ===
 - HTTP API: POST /ask, GET /balance, GET /stats, GET /health — http://127.0.0.1:3333 (agent.js, Express).
 - systemd: swarm-cache.service (автозапуск, Restart=always, After=docker) — активен.

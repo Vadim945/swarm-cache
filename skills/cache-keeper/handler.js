@@ -201,32 +201,40 @@ class CacheKeeper {
    * или локальная заглушка, если ключа нет. Токены — из usage ответа API (честные метрики).
    */
   async generate(question) {
-    const key = process.env.DEEPSEEK_API_KEY;
+    const key = process.env.LLM_API_KEY || process.env.DEEPSEEK_API_KEY;
     if (key) {
+      const base = process.env.LLM_BASE_URL || 'https://api.timeweb.ai/v1';
+      const model = process.env.LLM_MODEL || 'deepseek/deepseek-v4-flash';
       try {
-        const resp = await fetch('https://api.deepseek.com/chat/completions', {
+        const resp = await fetch(base + '/chat/completions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
           body: JSON.stringify({
-            model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+            model,
             messages: [
               { role: 'system', content: 'Ты — экспертный помощник. Отвечай кратко, по делу, по-русски.' },
               { role: 'user', content: question },
             ],
             temperature: 0.3,
-            max_tokens: 512,
+            max_tokens: 1024,
+            thinking: { type: 'disabled' },
             stream: false,
           }),
         });
-        if (!resp.ok) throw new Error('DeepSeek API HTTP ' + resp.status);
+        if (!resp.ok) {
+          const errText = (await resp.text()).slice(0, 200);
+          throw new Error('LLM API HTTP ' + resp.status + ': ' + errText);
+        }
         const data = await resp.json();
-        const answer = (data.choices && data.choices[0] && data.choices[0].message.content) || '';
+        const msg = data.choices && data.choices[0] && data.choices[0].message;
+        const answer = (msg && msg.content) || '';
         if (!answer) throw new Error('empty answer');
-        const tokens = (data.usage && data.usage.total_tokens) || null;
-        this._log(`LLM: question="${question.slice(0, 50)}..." tokens=${tokens} (usage)`);
-        return { answer, tokens, provider: 'deepseek' };
+        const u = data.usage || {};
+        const tokens = u.total_tokens ?? null;
+        this._log(`LLM(${model}): question="${question.slice(0, 50)}..." tokens=${tokens} (p=${u.prompt_tokens}, c=${u.completion_tokens}, r=${(u.completion_tokens_details || {}).reasoning_tokens || 0})`);
+        return { answer, tokens, provider: 'timeweb-deepseek-v4-flash' };
       } catch (e) {
-        this._log('⚠ DeepSeek API error: ' + e.message + ' — fallback to simulator');
+        this._log('⚠ LLM API error: ' + e.message + ' — fallback to simulator');
       }
     }
     // Фолбэк: локальная заглушка (без API-ключа)

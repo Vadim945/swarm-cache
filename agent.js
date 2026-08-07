@@ -61,7 +61,7 @@ async function main() {
   app.listen(PORT, HOST, () => {
     console.log(`[swarm-agent] HTTP сервис слушает http://${HOST}:${PORT}`);
     console.log(`[swarm-agent] P2P: ${keeper.p2pEnabled ? 'вкл (peer ' + keeper._peerId + ')' : 'выкл'}`);
-    console.log(`[swarm-agent] LLM: ${process.env.DEEPSEEK_API_KEY ? 'DeepSeek API' : 'заглушка (нет DEEPSEEK_API_KEY)'}`);
+    console.log(`[swarm-agent] LLM: ${process.env.LLM_API_KEY || process.env.DEEPSEEK_API_KEY ? 'TimeWeb DeepSeek V4 Flash' : 'заглушка (нет LLM_API_KEY)'}`);
   });
 }
 
