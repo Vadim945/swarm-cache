@@ -3,24 +3,21 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Swarm Cache — коллективный разум с кэшем</title>
+<title>Swarm Cache — быстрые и дешёвые ответы ИИ</title>
 <style>
   :root { --bg:#0f1420; --card:#171e2e; --accent:#4f8cff; --green:#3ddc84; --text:#e8edf7; --muted:#8b95ab; }
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:-apple-system,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
-  .wrap { max-width:860px; margin:0 auto; padding:48px 20px; }
-  .logo { font-size:20px; font-weight:700; letter-spacing:.5px; margin-bottom:8px; }
+  .wrap { max-width:760px; margin:0 auto; padding:44px 20px; }
+  .logo { font-size:19px; font-weight:700; letter-spacing:.5px; margin-bottom:6px; }
   .logo span { color:var(--accent); }
-  .tag { color:var(--muted); font-size:14px; margin-bottom:40px; }
-  h1 { font-size:34px; line-height:1.25; margin-bottom:14px; font-weight:800; }
+  .hero { margin:34px 0 28px; }
+  h1 { font-size:32px; line-height:1.25; margin-bottom:14px; font-weight:800; }
   h1 .grad { background:linear-gradient(90deg,var(--accent),var(--green)); -webkit-background-clip:text; background-clip:text; color:transparent; }
-  .sub { color:var(--muted); font-size:16px; line-height:1.6; margin-bottom:36px; max-width:640px; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-bottom:40px; }
-  .card { background:var(--card); border:1px solid #23304a; border-radius:14px; padding:18px; }
-  .card b { display:block; font-size:15px; margin-bottom:6px; }
-  .card p { color:var(--muted); font-size:13px; line-height:1.5; }
-  .num { font-size:26px; font-weight:800; color:var(--accent); display:block; margin-bottom:4px; }
-  .demo { background:var(--card); border:1px solid #23304a; border-radius:14px; padding:20px; margin-bottom:36px; }
+  .lead { color:var(--muted); font-size:16px; line-height:1.65; max-width:620px; }
+  .lead b { color:var(--text); }
+  .analogy { background:var(--card); border-left:3px solid var(--accent); border-radius:0 12px 12px 0; padding:14px 18px; margin:20px 0 30px; font-size:15px; line-height:1.6; color:#c9d4ee; }
+  .demo { background:var(--card); border:1px solid #23304a; border-radius:14px; padding:20px; margin-bottom:34px; }
   .demo label { font-size:14px; color:var(--muted); display:block; margin-bottom:8px; }
   .demo .row { display:flex; gap:10px; flex-wrap:wrap; }
   .demo input[type=text] { background:#0c1220; border:1px solid #33405e; border-radius:10px; padding:13px 16px; font-size:15px; color:var(--text); flex:1; min-width:220px; }
@@ -28,98 +25,131 @@
   .btn { background:var(--accent); color:#fff; border:none; border-radius:10px; padding:13px 20px; font-size:15px; font-weight:600; cursor:pointer; transition:.15s; }
   .btn:hover { filter:brightness(1.1); }
   .btn:disabled { opacity:.6; cursor:default; }
-  .btn.ghost { background:transparent; border:1px solid #33405e; color:var(--text); text-decoration:none; font-weight:500; padding:12px 18px; }
   .demo .out { margin-top:14px; background:#0c1220; border:1px solid #23304a; border-radius:10px; padding:14px 16px; font-size:14px; line-height:1.6; display:none; white-space:pre-wrap; }
   .demo .out.show { display:block; }
   .demo .meta { color:var(--muted); font-size:12px; margin-top:8px; }
   .demo .hit { color:var(--green); font-weight:600; }
-  .cta { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
-  input[type=text].reg { background:#0c1220; border:1px solid #33405e; border-radius:10px; padding:13px 16px; font-size:15px; color:var(--text); flex:1; min-width:200px; }
-  input[type=text].reg:focus { outline:none; border-color:var(--accent); }
-  .keybox { background:var(--card); border:1px solid #23304a; border-radius:10px; padding:16px 18px; display:none; margin-bottom:20px; }
+  h2 { font-size:20px; margin:34px 0 14px; }
+  .why { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:10px; }
+  .card { background:var(--card); border:1px solid #23304a; border-radius:12px; padding:16px; }
+  .card .t { font-weight:700; font-size:15px; margin-bottom:6px; }
+  .card p { color:var(--muted); font-size:13px; line-height:1.55; }
+  .who { color:var(--muted); font-size:15px; line-height:1.8; }
+  .who b { color:var(--text); }
+  .steps { counter-reset:step; margin:10px 0 20px; }
+  .step { display:flex; gap:14px; align-items:flex-start; margin-bottom:16px; }
+  .step .n { counter-increment:step; flex:0 0 34px; height:34px; border-radius:50%; background:var(--accent); color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center; font-size:15px; }
+  .step .b { padding-top:3px; }
+  .step .b .t { font-weight:600; font-size:15px; margin-bottom:4px; }
+  .step .b p { color:var(--muted); font-size:14px; line-height:1.55; }
+  pre { background:#0c1220; border:1px solid #23304a; border-radius:10px; padding:14px 16px; overflow-x:auto; font-size:13px; line-height:1.6; color:#c9d4ee; margin:10px 0 26px; }
+  code { font-family:ui-monospace,SFMono-Regular,monospace; }
+  .pricing { display:grid; grid-template-columns:1fr 1fr; gap:10px; max-width:460px; margin:12px 0 8px; }
+  .pr { background:var(--card); border:1px solid #23304a; border-radius:10px; padding:14px 16px; }
+  .pr .c { font-size:21px; font-weight:800; color:var(--accent); }
+  .pr .l { color:var(--muted); font-size:13px; line-height:1.4; }
+  .note { color:var(--muted); font-size:13px; margin-top:8px; }
+  .cta { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:16px 0 10px; }
+  input.reg { background:#0c1220; border:1px solid #33405e; border-radius:10px; padding:13px 16px; font-size:15px; color:var(--text); flex:1; min-width:200px; }
+  input.reg:focus { outline:none; border-color:var(--accent); }
+  .keybox { background:var(--card); border:1px solid #23304a; border-radius:10px; padding:16px 18px; display:none; margin-bottom:16px; }
   .keybox.show { display:block; }
   .keybox .k { font-family:ui-monospace,monospace; font-size:15px; color:var(--green); word-break:break-all; background:#0c1220; padding:10px 12px; border-radius:8px; margin:10px 0; }
   .keybox .warn { color:#ffb86c; font-size:13px; margin-top:6px; }
   .keybox .ref { font-family:ui-monospace,monospace; font-size:14px; color:var(--accent); word-break:break-all; background:#0c1220; padding:8px 10px; border-radius:8px; margin:8px 0; }
   .err { color:#ff6b6b; font-size:14px; margin-top:10px; display:none; }
-  pre { background:#0c1220; border:1px solid #23304a; border-radius:10px; padding:16px; overflow-x:auto; font-size:13px; line-height:1.6; color:#c9d4ee; margin:10px 0 30px; }
-  code { font-family:ui-monospace,SFMono-Regular,monospace; }
+  .faq { margin:8px 0 24px; }
+  .faq details { background:var(--card); border:1px solid #23304a; border-radius:10px; padding:13px 16px; margin-bottom:8px; }
+  .faq summary { cursor:pointer; font-weight:600; font-size:14px; color:var(--text); }
+  .faq p { color:var(--muted); font-size:14px; line-height:1.6; margin-top:8px; }
   .muted { color:var(--muted); font-size:13px; }
-  h2 { font-size:20px; margin:36px 0 14px; }
-  ul { color:var(--muted); font-size:14px; line-height:1.8; padding-left:20px; }
-  li b { color:var(--text); }
-  .pricing { display:grid; grid-template-columns:1fr 1fr; gap:10px; max-width:480px; margin:14px 0; }
-  .pr { background:var(--card); border:1px solid #23304a; border-radius:10px; padding:14px 16px; }
-  .pr .c { font-size:22px; font-weight:800; color:var(--accent); }
-  .pr .l { color:var(--muted); font-size:13px; }
+  .tech { color:#5a6780; font-size:12px; line-height:1.7; margin-top:28px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="logo">🐝 SWARM <span>CACHE</span></div>
-  <div class="tag">Коллективный разум v2 · IPFS P2P · микро-платежи</div>
 
-  <h1>Ответы LLM, которые <span class="grad">кэшируются роем</span> — быстро и дёшево</h1>
-  <div class="sub">
-    Один агент спросил — весь рой знает. Повторные и похожие вопросы отдаются из семантического кэша
-    за <b>~15 мс</b> вместо 5–9 секунд генерации. Кэш-хит в <b>10× дешевле</b> генерации.
-  </div>
-
-  <div class="cards">
-    <div class="card"><span class="num">15 мс</span><b>Ответ из кэша</b><p>вместо 5–9 секунд генерации LLM</p></div>
-    <div class="card"><span class="num">10×</span><b>Дешевле</b><p>кэш-хит стоит 0.1 ед, генерация — 1 ед</p></div>
-    <div class="card"><span class="num">100%</span><b>Экономия токенов</b><p>на повторных запросах — ноль вызовов LLM</p></div>
-    <div class="card"><span class="num">P2P</span><b>Рой агентов</b><p>IPFS pubsub: ответы распространяются между узлами</p></div>
+  <div class="hero">
+    <h1>Быстрые и дешёвые ответы ИИ.<br>Повторные вопросы — <span class="grad">мгновенно</span>.</h1>
+    <p class="lead">
+      Swarm Cache — это сервис, который отвечает на вопросы с помощью ИИ <b>и запоминает ответы</b>.
+      Когда кто-то задаёт такой же или похожий вопрос — ответ приходит из «памяти» за <b>миллисекунды</b>,
+      а не за 5–9 секунд, и стоит <b>в 10 раз дешевле</b>.
+    </p>
+    <div class="analogy">
+      💡 Представь умного секретаря: первый вопрос он переспрашивает у начальника (долго и дорого),
+      а на повторные отвечает сам, сразу. Чем больше вопросов — тем быстрее и дешевле работа.
+    </div>
   </div>
 
   <div class="demo">
-    <label>🎯 Попробуй без регистрации — 3 бесплатных вопроса в день</label>
+    <label>🎯 Попробуй прямо сейчас — бесплатно, 3 вопроса в день</label>
     <div class="row">
-      <input type="text" id="dq" placeholder="Например: объясни, как работает Attention в трансформерах" maxlength="300">
+      <input type="text" id="dq" placeholder="Например: объясни, как работает Attention в нейросетях" maxlength="300">
       <button class="btn" id="dask">Спросить</button>
     </div>
     <div class="out" id="dout"></div>
   </div>
 
-  <h2>Получить ключ (бонус 10 ед — бесплатно)</h2>
+  <h2>Зачем это нужно</h2>
+  <div class="why">
+    <div class="card"><div class="t">⚡ Быстро</div><p>Повторный ответ приходит за ~15 мс вместо 5–9 секунд ожидания.</p></div>
+    <div class="card"><div class="t">💰 Дёшево</div><p>Повторный вопрос стоит 0.1 ед, новый — 1 ед. Экономия до 90%.</p></div>
+    <div class="card"><div class="t">🧠 Умно</div><p>Понимает смысл: «что такое attention» и «как работает attention» — это один ответ.</p></div>
+  </div>
+
+  <h2>Кому подойдёт</h2>
+  <div class="who">
+    <b>Чат-ботам и поддержке</b> — клиенты задают одно и то же: отвечайте из кэша, не тратя деньги на ИИ.<br>
+    <b>FAQ и справочникам</b> — сотни одинаковых вопросов с мгновенными ответами.<br>
+    <b>Любому сервису с ИИ</b> — меньше расходов на API, быстрее отклик.
+  </div>
+
+  <h2>Как начать — 3 шага</h2>
+  <div class="steps">
+    <div class="step"><div class="n">1</div><div class="b"><div class="t">Попробуй</div><p>Задай вопрос в демо выше — бесплатно, без регистрации.</p></div></div>
+    <div class="step"><div class="n">2</div><div class="b"><div class="t">Получи ключ</div><p>Введи имя ниже — получишь ключ доступа и <b>10 бесплатных вопросов</b> в подарок.</p></div></div>
+    <div class="step"><div class="n">3</div><div class="b"><div class="t">Подключи</div><p>Один HTTP-запрос — и твой сервис отвечает через Swarm Cache.</p></div></div>
+  </div>
+
+  <pre><code>curl -X POST https://swarm.telscan.ru/ask \
+  -H "X-API-Key: ТВОЙ_КЛЮЧ" \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Что такое Attention?"}'</code></pre>
+
+  <h2>Получить ключ бесплатно</h2>
   <div class="cta">
     <input type="text" class="reg" id="name" placeholder="Ваше имя или ник" maxlength="40">
-    <input type="text" class="reg" id="ref" placeholder="Реф-код (если вас пригласили)" maxlength="24" style="flex:0 0 180px">
+    <input type="text" class="reg" id="ref" placeholder="Реф-код (если пригласили)" maxlength="24" style="flex:0 0 170px">
     <button class="btn" id="getkey">Получить ключ</button>
   </div>
   <div class="keybox" id="keybox">
     Ваш API-ключ (сохраните — показывается один раз):
     <div class="k" id="keyval"></div>
-    <div class="warn">⚠️ Бонус 10 ед уже начислен. Храните ключ в секрете.</div>
-    <div style="margin-top:10px">Ваш реферальный код (приводите друзей → +2 ед вам и им):</div>
+    <div class="warn">⚠️ 10 бесплатных вопросов уже начислены. Храните ключ в секрете.</div>
+    <div style="margin-top:10px">Ваш реферальный код (друзья получат +2 ед, и вы тоже):</div>
     <div class="ref" id="refval"></div>
     <div class="muted" id="shareval"></div>
   </div>
   <div class="err" id="err"></div>
 
-  <h2>Как использовать</h2>
-  <pre><code>curl -X POST https://swarm.telscan.ru/ask \
-  -H "X-API-Key: ***" \
-  -H "Content-Type: application/json" \
-  -d '{"question":"Объясни, как работает Attention в трансформерах"}'</code></pre>
-
-  <h2>Тарифы</h2>
+  <h2>Сколько это стоит</h2>
   <div class="pricing">
-    <div class="pr"><div class="c">1 ед</div><div class="l">Генерация LLM (DeepSeek V4)</div></div>
-    <div class="pr"><div class="c">0.1 ед</div><div class="l">Кэш-хит (повтор/похожий вопрос)</div></div>
+    <div class="pr"><div class="c">1 ед</div><div class="l">Новый вопрос — ИИ думает и отвечает</div></div>
+    <div class="pr"><div class="c">0.1 ед</div><div class="l">Повторный или похожий — из памяти, мгновенно</div></div>
   </div>
-  <p class="muted">🎁 Бонус за приглашение: <b>+2 ед</b> вам и другу. Демо без ключа: 3 вопроса/день.</p>
+  <p class="note">🎁 10 ед — бесплатно при регистрации · приведи друга → +2 ед вам обоим</p>
 
-  <h2>Что внутри</h2>
-  <ul>
-    <li><b>Семантический кэш</b> — SQLite + sqlite-vec, эмбеддинги локально (384-мерные), порог сходства 0.70</li>
-    <li><b>Реальный LLM</b> — DeepSeek V4 Flash (TimeWeb Cloud), честный подсчёт токенов из usage</li>
-    <li><b>P2P-обмен</b> — IPFS kubo + pubsub: ответы одного агента доступны всему рою</li>
-    <li><b>Микро-платежи</b> — L402-совместимая модель: платишь за ответы, авторы получают сатоши</li>
-    <li><b>API</b> — <code>/ask</code>, <code>/balance</code>, <code>/pricing</code>, <code>/stats</code>, rate limit 30 req/мин</li>
-  </ul>
+  <h2>Частые вопросы</h2>
+  <div class="faq">
+    <details><summary>Что значит «из памяти»?</summary><p>Сервис запоминает каждый ответ. Если вопрос задают снова (или похожий по смыслу) — он не вызывает ИИ, а отдаёт готовый ответ. Это как кэш в браузере, только умный.</p></details>
+    <details><summary>Что такое «единицы» (ед)?</summary><p>Это внутренняя валюта сервиса. 1 ед ≈ один новый вопрос. Повторный стоит 0.1 ед. При регистрации вы получаете 10 ед бесплатно — этого хватит на полноценное знакомство.</p></details>
+    <details><summary>Чем это лучше обычного ИИ-API?</summary><p>Обычный API считает деньги за каждый вопрос. Swarm Cache отвечает на повторные вопросы бесплатно для вас — из памяти. На практике экономия 70–90%.</p></details>
+    <details><summary>Как подключить к своему проекту?</summary><p>Один POST-запрос: отправляете вопрос и ключ, получаете ответ. Подходит для ботов, сайтов, скриптов — что угодно, что умеет HTTP.</p></details>
+  </div>
 
-  <p class="muted" style="margin-top:30px">Swarm Cache · работает на IPFS kubo · HTTPS Let's Encrypt · сделано на OpenClaw</p>
+  <p class="muted" style="margin-top:26px">Swarm Cache · HTTPS · работает 24/7 · <a href="https://github.com/Vadim945/swarm-cache" style="color:var(--accent)">исходный код</a></p>
 </div>
 
 <script>
@@ -148,11 +178,11 @@ btn.addEventListener('click', async () => {
     if (!r.ok) throw new Error(d.error || 'Ошибка');
     document.getElementById('keyval').textContent = d.key;
     document.getElementById('refval').textContent = d.ref_code;
-    const share = 'Ваша ссылка для друзей (они получат +' + d.referral_bonus + ' ед, и вы тоже):\nhttps://swarm.telscan.ru/?ref=' + d.ref_code;
-    document.getElementById('shareval').textContent = share;
+    let share = 'Ваша ссылка для друзей (они получат +' + d.referral_bonus + ' ед, и вы тоже):\nhttps://swarm.telscan.ru/?ref=' + d.ref_code;
     if (d.referral && d.referral.ok) {
-      document.getElementById('shareval').textContent = '✅ Пригласивший получил +' + d.referral_bonus + ' ед. ' + share;
+      share = '✅ Пригласивший получил +' + d.referral_bonus + ' ед. ' + share;
     }
+    document.getElementById('shareval').textContent = share;
     box.classList.add('show');
     btn.textContent = 'Готово ✅';
     btn.disabled = true;
@@ -181,15 +211,17 @@ dask.addEventListener('click', async () => {
     const d = await r.json();
     if (!r.ok) {
       if (r.status === 429) {
-        dout.innerHTML = '⚠️ ' + d.error + '<div class="meta">Зарегистрируйтесь выше, чтобы продолжить — бонус 10 ед бесплатно.</div>';
+        dout.innerHTML = '⚠️ ' + d.error + '<div class="meta">Зарегистрируйтесь выше, чтобы продолжить — 10 бесплатных вопросов в подарок.</div>';
       } else {
         dout.textContent = 'Ошибка: ' + (d.error || r.status);
       }
       return;
     }
-    const tag = d.cached ? '<span class="hit">⚡ кэш</span> ' + d.timeMs + ' мс' : '🆕 генерация ' + d.timeMs + ' мс';
+    const tag = d.cached
+      ? '<span class="hit">⚡ из памяти</span> за ' + d.timeMs + ' мс'
+      : '🆕 ИИ ответил за ' + d.timeMs + ' с';
     dout.innerHTML = d.answer + '<div class="meta">' + tag + ' · осталось бесплатных вопросов: ' + d.demo_left + '</div>' +
-      (d.demo_left <= 0 ? '<div class="meta">Лимит демо исчерпан — <b>зарегистрируйтесь</b>, чтобы продолжить (+10 ед бесплатно).</div>' : '');
+      (d.demo_left <= 0 ? '<div class="meta">Лимит демо исчерпан — <b>зарегистрируйтесь</b> и получите 10 вопросов бесплатно.</div>' : '');
   } catch (e) {
     dout.textContent = 'Ошибка сети: ' + e.message;
   } finally {
