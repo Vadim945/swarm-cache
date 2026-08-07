@@ -12,6 +12,7 @@
 const path = require('path');
 const express = require('express');
 const { CacheKeeper, LOCAL_AGENT } = require('./skills/cache-keeper/handler.js');
+const { UserAuth } = require('./auth.js');
 
 const PORT = Number(process.env.SWARM_PORT || 3333);
 const HOST = process.env.SWARM_HOST || '127.0.0.1';
@@ -26,7 +27,22 @@ async function main() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
 
-  app.post('/ask', async (req, res) => {
+  // --- Аутентификация и rate limit (публичный доступ) ---
+  const auth = new UserAuth();
+  const requireKey = (req, res, next) => {
+    const key = req.headers['x-api-key'];
+    const user = auth.auth(key);
+    if (!user) return res.status(401).json({ error: 'invalid or missing X-API-Key' });
+    if (!auth.rateLimit(user.id)) {
+      return res.status(429).json({ error: 'rate limit exceeded (per minute)', retryAfterSec: 60 });
+    }
+    req.user = user;
+    next();
+  };
+
+  app.get('/health', (req, res) => res.json({ ok: true, ts: Date.now() }));
+
+  app.post('/ask', requireKey, async (req, res) => {
     const question = req.body && typeof req.body.question === 'string' ? req.body.question.trim() : '';
     if (!question) return res.status(400).json({ error: 'field "question" (string) is required' });
     try {
@@ -48,16 +64,14 @@ async function main() {
     }
   });
 
-  app.get('/balance', (req, res) => {
+  app.get('/balance', requireKey, (req, res) => {
     const agent = (req.query.agent || LOCAL_AGENT).toString();
     res.json({ agent, balance_sats: keeper.balance(agent) });
   });
 
-  app.get('/stats', (req, res) => {
+  app.get('/stats', requireKey, (req, res) => {
     res.json(keeper.stats());
   });
-
-  app.get('/health', (req, res) => res.json({ ok: true, ts: Date.now() }));
 
   app.listen(PORT, HOST, () => {
     console.log(`[swarm-agent] HTTP сервис слушает http://${HOST}:${PORT}`);
