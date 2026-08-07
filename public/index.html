@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swarm Cache — коллективный разум с кэшем</title>
+<style>
+  :root { --bg:#0f1420; --card:#171e2e; --accent:#4f8cff; --green:#3ddc84; --text:#e8edf7; --muted:#8b95ab; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+  .wrap { max-width:860px; margin:0 auto; padding:48px 20px; }
+  .logo { font-size:20px; font-weight:700; letter-spacing:.5px; margin-bottom:8px; }
+  .logo span { color:var(--accent); }
+  .tag { color:var(--muted); font-size:14px; margin-bottom:40px; }
+  h1 { font-size:34px; line-height:1.25; margin-bottom:14px; font-weight:800; }
+  h1 .grad { background:linear-gradient(90deg,var(--accent),var(--green)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .sub { color:var(--muted); font-size:16px; line-height:1.6; margin-bottom:36px; max-width:640px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-bottom:40px; }
+  .card { background:var(--card); border:1px solid #23304a; border-radius:14px; padding:18px; }
+  .card b { display:block; font-size:15px; margin-bottom:6px; }
+  .card p { color:var(--muted); font-size:13px; line-height:1.5; }
+  .num { font-size:26px; font-weight:800; color:var(--accent); display:block; margin-bottom:4px; }
+  .cta { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+  .btn { background:var(--accent); color:#fff; border:none; border-radius:10px; padding:14px 22px; font-size:16px; font-weight:600; cursor:pointer; transition:.15s; }
+  .btn:hover { filter:brightness(1.1); }
+  .btn.ghost { background:transparent; border:1px solid #33405e; color:var(--text); text-decoration:none; font-weight:500; padding:13px 20px; }
+  .keybox { background:var(--card); border:1px solid #23304a; border-radius:10px; padding:16px 18px; display:none; margin-bottom:20px; }
+  .keybox.show { display:block; }
+  .keybox .k { font-family:ui-monospace,monospace; font-size:15px; color:var(--green); word-break:break-all; background:#0c1220; padding:10px 12px; border-radius:8px; margin:10px 0; }
+  .keybox .warn { color:#ffb86c; font-size:13px; margin-top:6px; }
+  .err { color:#ff6b6b; font-size:14px; margin-top:10px; display:none; }
+  pre { background:#0c1220; border:1px solid #23304a; border-radius:10px; padding:16px; overflow-x:auto; font-size:13px; line-height:1.6; color:#c9d4ee; margin:10px 0 30px; }
+  code { font-family:ui-monospace,SFMono-Regular,monospace; }
+  .muted { color:var(--muted); font-size:13px; }
+  input[type=text] { background:#0c1220; border:1px solid #33405e; border-radius:10px; padding:13px 16px; font-size:15px; color:var(--text); flex:1; min-width:200px; }
+  input[type=text]:focus { outline:none; border-color:var(--accent); }
+  h2 { font-size:20px; margin:36px 0 14px; }
+  ul { color:var(--muted); font-size:14px; line-height:1.8; padding-left:20px; }
+  li b { color:var(--text); }
+  .pricing { display:grid; grid-template-columns:1fr 1fr; gap:10px; max-width:480px; margin:14px 0; }
+  .pr { background:var(--card); border:1px solid #23304a; border-radius:10px; padding:14px 16px; }
+  .pr .c { font-size:22px; font-weight:800; color:var(--accent); }
+  .pr .l { color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">🐝 SWARM <span>CACHE</span></div>
+  <div class="tag">Коллективный разум v2 · IPFS P2P · микро-платежи</div>
+
+  <h1>Ответы LLM, которые <span class="grad">кэшируются роем</span> — быстро и дёшево</h1>
+  <div class="sub">
+    Один агент спросил — весь рой знает. Повторные и похожие вопросы отдаются из семантического кэша
+    за <b>~15 мс</b> вместо 5–9 секунд генерации. Кэш-хит в <b>10× дешевле</b> генерации.
+  </div>
+
+  <div class="cards">
+    <div class="card"><span class="num">15 мс</span><b>Ответ из кэша</b><p>вместо 5–9 секунд генерации LLM</p></div>
+    <div class="card"><span class="num">10×</span><b>Дешевле</b><p>кэш-хит стоит 0.1 ед, генерация — 1 ед</p></div>
+    <div class="card"><span class="num">100%</span><b>Экономия токенов</b><p>на повторных запросах — ноль вызовов LLM</p></div>
+    <div class="card"><span class="num">P2P</span><b>Рой агентов</b><p>IPFS pubsub: ответы распространяются между узлами</p></div>
+  </div>
+
+  <h2>Получить ключ (бонус 10 ед — бесплатно)</h2>
+  <div class="cta">
+    <input type="text" id="name" placeholder="Ваше имя или ник" maxlength="40">
+    <button class="btn" id="getkey">Получить ключ</button>
+  </div>
+  <div class="keybox" id="keybox">
+    Ваш API-ключ (сохраните — показывается один раз):
+    <div class="k" id="keyval"></div>
+    <div class="warn">⚠️ Бонус 10 ед уже начислен. Храните ключ в секрете.</div>
+  </div>
+  <div class="err" id="err"></div>
+
+  <h2>Как использовать</h2>
+  <pre><code>curl -X POST https://swarm.telscan.ru/ask \
+  -H "X-API-Key: ВАШ_КЛЮЧ" \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Объясни, как работает Attention в трансформерах"}'</code></pre>
+
+  <h2>Тарифы</h2>
+  <div class="pricing">
+    <div class="pr"><div class="c">1 ед</div><div class="l">Генерация LLM (DeepSeek V4)</div></div>
+    <div class="pr"><div class="c">0.1 ед</div><div class="l">Кэш-хит (повтор/похожий вопрос)</div></div>
+  </div>
+
+  <h2>Что внутри</h2>
+  <ul>
+    <li><b>Семантический кэш</b> — SQLite + sqlite-vec, эмбеддинги локально (384-мерные), порог сходства 0.70</li>
+    <li><b>Реальный LLM</b> — DeepSeek V4 Flash (TimeWeb Cloud), честный подсчёт токенов из usage</li>
+    <li><b>P2P-обмен</b> — IPFS kubo + pubsub: ответы одного агента доступны всему рою</li>
+    <li><b>Микро-платежи</b> — L402-совместимая модель: платишь за ответы, авторы получают сатоши</li>
+    <li><b>API</b> — <code>/ask</code>, <code>/balance</code>, <code>/pricing</code>, <code>/stats</code>, rate limit 30 req/мин</li>
+  </ul>
+
+  <p class="muted" style="margin-top:30px">Swarm Cache · работает на IPFS kubo · HTTPS Let's Encrypt · сделано на OpenClaw</p>
+</div>
+
+<script>
+const btn = document.getElementById('getkey');
+const err = document.getElementById('err');
+const box = document.getElementById('keybox');
+btn.addEventListener('click', async () => {
+  const name = document.getElementById('name').value.trim();
+  if (!name) { err.textContent = 'Введите имя или ник'; err.style.display = 'block'; return; }
+  err.style.display = 'none';
+  try {
+    const r = await fetch('/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Ошибка');
+    document.getElementById('keyval').textContent = d.key;
+    box.classList.add('show');
+    btn.textContent = 'Готово ✅';
+    btn.disabled = true;
+  } catch (e) {
+    err.textContent = 'Ошибка: ' + e.message;
+    err.style.display = 'block';
+  }
+});
+</script>
+</body>
+</html>

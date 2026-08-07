@@ -10,6 +10,7 @@
  * Порт 3333, слушает 127.0.0.1 (безопасно; наружу не торчит).
  */
 const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const { CacheKeeper, LOCAL_AGENT } = require('./skills/cache-keeper/handler.js');
 const { UserAuth } = require('./auth.js');
@@ -31,6 +32,26 @@ async function main() {
   // --- Аутентификация и rate limit (публичный доступ) ---
   const auth = new UserAuth();
   const billing = new Billing();
+  // Лимит self-serve регистраций: N ключей с одного IP в сутки (защита от накрутки)
+  const REG_DAILY_LIMIT = Number(process.env.REG_DAILY_LIMIT || 3);
+  const regCounters = new Map(); // ip -> [даты (ms)]
+  const clientIp = (req) => {
+    const fwd = req.headers['x-forwarded-for'];
+    return fwd ? String(fwd).split(',')[0].trim() : req.ip;
+  };
+  const canRegister = (ip) => {
+    const now = Date.now();
+    const day = 24 * 3600 * 1000;
+    let arr = regCounters.get(ip) || [];
+    arr = arr.filter((t) => now - t < day);
+    regCounters.set(ip, arr);
+    return arr.length < REG_DAILY_LIMIT;
+  };
+  const markRegistered = (ip) => {
+    const arr = regCounters.get(ip) || [];
+    arr.push(Date.now());
+    regCounters.set(ip, arr);
+  };
   const requireKey = (req, res, next) => {
     const key = req.headers['x-api-key'];
     const user = auth.auth(key);
@@ -43,6 +64,30 @@ async function main() {
   };
 
   app.get('/health', (req, res) => res.json({ ok: true, ts: Date.now() }));
+
+  // --- Лендинг (корень) ---
+  app.get('/', (req, res) => {
+    const html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+    res.type('html').send(html);
+  });
+
+  // --- Self-serve регистрация: имя -> ключ + бонус (без ручной раздачи) ---
+  app.post('/register', (req, res) => {
+    const name = req.body && typeof req.body.name === 'string' ? req.body.name.trim().slice(0, 40) : '';
+    if (!name) return res.status(400).json({ error: 'field "name" (string) is required' });
+    const ip = clientIp(req);
+    if (!canRegister(ip)) {
+      return res.status(429).json({ error: 'registration limit reached for this IP (max ' + REG_DAILY_LIMIT + ' per day)' });
+    }
+    try {
+      const { id, key } = auth.createKey(name);
+      billing.credit(id, FREE_BONUS, 'self-serve beta bonus');
+      markRegistered(ip);
+      res.json({ ok: true, user_id: id, name, key, bonus: FREE_BONUS, credits: FREE_BONUS });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   app.post('/ask', requireKey, async (req, res) => {
     const question = req.body && typeof req.body.question === 'string' ? req.body.question.trim() : '';
