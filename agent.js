@@ -13,6 +13,7 @@ const path = require('path');
 const express = require('express');
 const { CacheKeeper, LOCAL_AGENT } = require('./skills/cache-keeper/handler.js');
 const { UserAuth } = require('./auth.js');
+const { Billing, GEN_COST, CACHE_COST, FREE_BONUS } = require('./billing.js');
 
 const PORT = Number(process.env.SWARM_PORT || 3333);
 const HOST = process.env.SWARM_HOST || '127.0.0.1';
@@ -29,6 +30,7 @@ async function main() {
 
   // --- Аутентификация и rate limit (публичный доступ) ---
   const auth = new UserAuth();
+  const billing = new Billing();
   const requireKey = (req, res, next) => {
     const key = req.headers['x-api-key'];
     const user = auth.auth(key);
@@ -45,8 +47,17 @@ async function main() {
   app.post('/ask', requireKey, async (req, res) => {
     const question = req.body && typeof req.body.question === 'string' ? req.body.question.trim() : '';
     if (!question) return res.status(400).json({ error: 'field "question" (string) is required' });
+    const bal = billing.getBalance(req.user.id);
+    if (bal < CACHE_COST) {
+      return res.status(402).json({ error: 'insufficient balance', balance: bal, minCost: CACHE_COST });
+    }
     try {
       const r = await keeper.ask(question);
+      // списываем по факту: кэш-хит дешевле генерации
+      const charge = billing.charge(req.user.id, !!r.cached);
+      if (!charge.ok) {
+        return res.status(402).json({ error: charge.reason, balance: charge.balance, need: charge.need });
+      }
       const prefix = r.cached ? (r.p2p ? '[P2P Cached] ' : '[Cached] ') : '';
       res.json({
         answer: prefix + r.answer,
@@ -58,6 +69,8 @@ async function main() {
         provider: r.provider ?? (r.cached ? 'cache' : null),
         timeMs: r.timeMs,
         payment: r.payment ?? null,
+        cost: r.cached ? CACHE_COST : GEN_COST,
+        balance_after: charge.balance,
       });
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -66,7 +79,18 @@ async function main() {
 
   app.get('/balance', requireKey, (req, res) => {
     const agent = (req.query.agent || LOCAL_AGENT).toString();
-    res.json({ agent, balance_sats: keeper.balance(agent) });
+    res.json({
+      user_id: req.user.id,
+      user_name: req.user.name,
+      credits: billing.getBalance(req.user.id),
+      gen_cost: GEN_COST,
+      cache_cost: CACHE_COST,
+      agent_balance_sats: keeper.balance(agent),
+    });
+  });
+
+  app.get('/pricing', (req, res) => {
+    res.json({ gen_cost: GEN_COST, cache_cost: CACHE_COST, free_bonus: FREE_BONUS, unit: 'credits' });
   });
 
   app.get('/stats', requireKey, (req, res) => {

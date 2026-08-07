@@ -114,3 +114,14 @@ cd /clients/322265183/swarm-cache
 - Авторизация: X-API-Key (SHA-256 в data/users.db), CLI: node apikey.js add|list|revoke.
 - Rate limit: 30 req/мин на пользователя (проверено: 30x200 -> 429).
 - Проверено извне (через публичный IP): /ask 200 (кэш-хит 19 мс), без ключа 401, /health OK.
+
+=== ШАГ 2: БИЛЛИНГ В РУБЛЯХ (предоплаченные ключи) ===
+- billing.js: user_balances (user_id, credits REAL) в data/users.db, user_billing_log, защита от минуса.
+- Тарифы: генерация (LLM) 1 ед, кэш-хит 0.1 ед (в 10× дешевле — фишка продукта).
+- Бонус бета: +10 ед при создании ключа (apikey.js add).
+- CLI: node bill.js credit <id> <amount> [note] | list | price | log <id>.
+- API: /balance (кредиты + сатоши агента), /pricing (открыт), /ask возвращает cost и balance_after;
+  при нехватке баланса — HTTP 402 {"error":"insufficient balance",...}.
+- Проверено через публичный шлюз: генерация -1 ед (6.2с), повтор -0.1 ед (30мс), близнец -0.1 ед (15мс, sim=0.92),
+  402 при балансе 0.05 (< minCost 0.1). История операций пишется.
+- Экономика: 10 ед бонуса = 1 генерация + 90 кэш-хитов (или 9 генераций + 10 кэшей и т.д.).

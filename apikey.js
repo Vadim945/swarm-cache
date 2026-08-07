@@ -7,6 +7,7 @@
  *   node apikey.js revoke <id>   — отозвать ключ
  */
 const { UserAuth } = require('./auth.js');
+const { Billing, FREE_BONUS } = require('./billing.js');
 
 const [,, cmd, arg] = process.argv;
 const auth = new UserAuth();
@@ -15,9 +16,11 @@ switch (cmd) {
   case 'add': {
     if (!arg) { console.error('usage: node apikey.js add <name>'); process.exit(1); }
     const { id, name, key } = auth.createKey(arg);
+    const bal = new Billing().credit(id, FREE_BONUS, 'beta bonus');
     console.log(`✅ Пользователь #${id} «${name}» создан.`);
+    console.log(`🎁 Бонус беты: +${FREE_BONUS} ед (баланс ${bal})`);
     console.log(`\n🔑 API-ключ (сохраните, показывается один раз):\n${key}\n`);
-    console.log(`Использование: curl -X POST https://<host>/ask -H "X-API-Key: ${key}" -H "Content-Type: application/json" -d '{"question":"..."}'`);
+    console.log(`Использование: curl -X POST https://<host>/ask -H "X-API-Key: ***" -H "Content-Type: application/json" -d '{"question":"..."}'`);
     break;
   }
   case 'list': {
