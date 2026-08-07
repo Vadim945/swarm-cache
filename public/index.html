@@ -20,20 +20,31 @@
   .card b { display:block; font-size:15px; margin-bottom:6px; }
   .card p { color:var(--muted); font-size:13px; line-height:1.5; }
   .num { font-size:26px; font-weight:800; color:var(--accent); display:block; margin-bottom:4px; }
-  .cta { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
-  .btn { background:var(--accent); color:#fff; border:none; border-radius:10px; padding:14px 22px; font-size:16px; font-weight:600; cursor:pointer; transition:.15s; }
+  .demo { background:var(--card); border:1px solid #23304a; border-radius:14px; padding:20px; margin-bottom:36px; }
+  .demo label { font-size:14px; color:var(--muted); display:block; margin-bottom:8px; }
+  .demo .row { display:flex; gap:10px; flex-wrap:wrap; }
+  .demo input[type=text] { background:#0c1220; border:1px solid #33405e; border-radius:10px; padding:13px 16px; font-size:15px; color:var(--text); flex:1; min-width:220px; }
+  .demo input[type=text]:focus { outline:none; border-color:var(--accent); }
+  .btn { background:var(--accent); color:#fff; border:none; border-radius:10px; padding:13px 20px; font-size:15px; font-weight:600; cursor:pointer; transition:.15s; }
   .btn:hover { filter:brightness(1.1); }
-  .btn.ghost { background:transparent; border:1px solid #33405e; color:var(--text); text-decoration:none; font-weight:500; padding:13px 20px; }
+  .btn:disabled { opacity:.6; cursor:default; }
+  .btn.ghost { background:transparent; border:1px solid #33405e; color:var(--text); text-decoration:none; font-weight:500; padding:12px 18px; }
+  .demo .out { margin-top:14px; background:#0c1220; border:1px solid #23304a; border-radius:10px; padding:14px 16px; font-size:14px; line-height:1.6; display:none; white-space:pre-wrap; }
+  .demo .out.show { display:block; }
+  .demo .meta { color:var(--muted); font-size:12px; margin-top:8px; }
+  .demo .hit { color:var(--green); font-weight:600; }
+  .cta { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+  input[type=text].reg { background:#0c1220; border:1px solid #33405e; border-radius:10px; padding:13px 16px; font-size:15px; color:var(--text); flex:1; min-width:200px; }
+  input[type=text].reg:focus { outline:none; border-color:var(--accent); }
   .keybox { background:var(--card); border:1px solid #23304a; border-radius:10px; padding:16px 18px; display:none; margin-bottom:20px; }
   .keybox.show { display:block; }
   .keybox .k { font-family:ui-monospace,monospace; font-size:15px; color:var(--green); word-break:break-all; background:#0c1220; padding:10px 12px; border-radius:8px; margin:10px 0; }
   .keybox .warn { color:#ffb86c; font-size:13px; margin-top:6px; }
+  .keybox .ref { font-family:ui-monospace,monospace; font-size:14px; color:var(--accent); word-break:break-all; background:#0c1220; padding:8px 10px; border-radius:8px; margin:8px 0; }
   .err { color:#ff6b6b; font-size:14px; margin-top:10px; display:none; }
   pre { background:#0c1220; border:1px solid #23304a; border-radius:10px; padding:16px; overflow-x:auto; font-size:13px; line-height:1.6; color:#c9d4ee; margin:10px 0 30px; }
   code { font-family:ui-monospace,SFMono-Regular,monospace; }
   .muted { color:var(--muted); font-size:13px; }
-  input[type=text] { background:#0c1220; border:1px solid #33405e; border-radius:10px; padding:13px 16px; font-size:15px; color:var(--text); flex:1; min-width:200px; }
-  input[type=text]:focus { outline:none; border-color:var(--accent); }
   h2 { font-size:20px; margin:36px 0 14px; }
   ul { color:var(--muted); font-size:14px; line-height:1.8; padding-left:20px; }
   li b { color:var(--text); }
@@ -61,21 +72,34 @@
     <div class="card"><span class="num">P2P</span><b>Рой агентов</b><p>IPFS pubsub: ответы распространяются между узлами</p></div>
   </div>
 
+  <div class="demo">
+    <label>🎯 Попробуй без регистрации — 3 бесплатных вопроса в день</label>
+    <div class="row">
+      <input type="text" id="dq" placeholder="Например: объясни, как работает Attention в трансформерах" maxlength="300">
+      <button class="btn" id="dask">Спросить</button>
+    </div>
+    <div class="out" id="dout"></div>
+  </div>
+
   <h2>Получить ключ (бонус 10 ед — бесплатно)</h2>
   <div class="cta">
-    <input type="text" id="name" placeholder="Ваше имя или ник" maxlength="40">
+    <input type="text" class="reg" id="name" placeholder="Ваше имя или ник" maxlength="40">
+    <input type="text" class="reg" id="ref" placeholder="Реф-код (если вас пригласили)" maxlength="24" style="flex:0 0 180px">
     <button class="btn" id="getkey">Получить ключ</button>
   </div>
   <div class="keybox" id="keybox">
     Ваш API-ключ (сохраните — показывается один раз):
     <div class="k" id="keyval"></div>
     <div class="warn">⚠️ Бонус 10 ед уже начислен. Храните ключ в секрете.</div>
+    <div style="margin-top:10px">Ваш реферальный код (приводите друзей → +2 ед вам и им):</div>
+    <div class="ref" id="refval"></div>
+    <div class="muted" id="shareval"></div>
   </div>
   <div class="err" id="err"></div>
 
   <h2>Как использовать</h2>
   <pre><code>curl -X POST https://swarm.telscan.ru/ask \
-  -H "X-API-Key: ВАШ_КЛЮЧ" \
+  -H "X-API-Key: ***" \
   -H "Content-Type: application/json" \
   -d '{"question":"Объясни, как работает Attention в трансформерах"}'</code></pre>
 
@@ -84,6 +108,7 @@
     <div class="pr"><div class="c">1 ед</div><div class="l">Генерация LLM (DeepSeek V4)</div></div>
     <div class="pr"><div class="c">0.1 ед</div><div class="l">Кэш-хит (повтор/похожий вопрос)</div></div>
   </div>
+  <p class="muted">🎁 Бонус за приглашение: <b>+2 ед</b> вам и другу. Демо без ключа: 3 вопроса/день.</p>
 
   <h2>Что внутри</h2>
   <ul>
@@ -98,6 +123,13 @@
 </div>
 
 <script>
+// подхватываем ?ref= из ссылки (share-ссылки вида /?ref=REF-XXXX)
+(function () {
+  const p = new URLSearchParams(location.search);
+  const ref = p.get('ref');
+  if (ref) document.getElementById('ref').value = ref;
+})();
+
 const btn = document.getElementById('getkey');
 const err = document.getElementById('err');
 const box = document.getElementById('keybox');
@@ -106,14 +138,21 @@ btn.addEventListener('click', async () => {
   if (!name) { err.textContent = 'Введите имя или ник'; err.style.display = 'block'; return; }
   err.style.display = 'none';
   try {
+    const ref = document.getElementById('ref').value.trim();
     const r = await fetch('/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, ref })
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Ошибка');
     document.getElementById('keyval').textContent = d.key;
+    document.getElementById('refval').textContent = d.ref_code;
+    const share = 'Ваша ссылка для друзей (они получат +' + d.referral_bonus + ' ед, и вы тоже):\nhttps://swarm.telscan.ru/?ref=' + d.ref_code;
+    document.getElementById('shareval').textContent = share;
+    if (d.referral && d.referral.ok) {
+      document.getElementById('shareval').textContent = '✅ Пригласивший получил +' + d.referral_bonus + ' ед. ' + share;
+    }
     box.classList.add('show');
     btn.textContent = 'Готово ✅';
     btn.disabled = true;
@@ -122,6 +161,42 @@ btn.addEventListener('click', async () => {
     err.style.display = 'block';
   }
 });
+
+// демо: вопрос без ключа
+const dask = document.getElementById('dask');
+const dq = document.getElementById('dq');
+const dout = document.getElementById('dout');
+dask.addEventListener('click', async () => {
+  const q = dq.value.trim();
+  if (!q) { dq.focus(); return; }
+  dout.classList.add('show');
+  dout.textContent = '⏳ Думаю...';
+  dask.disabled = true;
+  try {
+    const r = await fetch('/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q })
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      if (r.status === 429) {
+        dout.innerHTML = '⚠️ ' + d.error + '<div class="meta">Зарегистрируйтесь выше, чтобы продолжить — бонус 10 ед бесплатно.</div>';
+      } else {
+        dout.textContent = 'Ошибка: ' + (d.error || r.status);
+      }
+      return;
+    }
+    const tag = d.cached ? '<span class="hit">⚡ кэш</span> ' + d.timeMs + ' мс' : '🆕 генерация ' + d.timeMs + ' мс';
+    dout.innerHTML = d.answer + '<div class="meta">' + tag + ' · осталось бесплатных вопросов: ' + d.demo_left + '</div>' +
+      (d.demo_left <= 0 ? '<div class="meta">Лимит демо исчерпан — <b>зарегистрируйтесь</b>, чтобы продолжить (+10 ед бесплатно).</div>' : '');
+  } catch (e) {
+    dout.textContent = 'Ошибка сети: ' + e.message;
+  } finally {
+    dask.disabled = false;
+  }
+});
+dq.addEventListener('keydown', (e) => { if (e.key === 'Enter') dask.click(); });
 </script>
 </body>
 </html>

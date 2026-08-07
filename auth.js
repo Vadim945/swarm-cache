@@ -26,19 +26,29 @@ class UserAuth {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         key_hash TEXT NOT NULL UNIQUE,
+        ref_code TEXT,
         created_at INTEGER NOT NULL,
         revoked INTEGER NOT NULL DEFAULT 0
       );
     `);
+    // миграция для старых БД: если колонки ref_code нет — добавляем
+    try {
+      const cols = this.db.prepare('PRAGMA table_info(users)').all();
+      if (!cols.some((c) => c.name === 'ref_code')) {
+        this.db.exec('ALTER TABLE users ADD COLUMN ref_code TEXT');
+      }
+    } catch (e) { /* уже есть */ }
     // окна rate limit: userId -> [timestamps]
     this.windows = new Map();
   }
 
   createKey(name) {
     const key = crypto.randomBytes(24).toString('base64url');
-    this.db.prepare('INSERT INTO users (name, key_hash, created_at) VALUES (?,?,?)')
-      .run(name, hashKey(key), Date.now());
-    return { id: this.db.prepare('SELECT last_insert_rowid() id').get().id, name, key };
+    const refCode = 'REF-' + crypto.randomBytes(4).toString('hex').toUpperCase();
+    this.db.prepare('INSERT INTO users (name, key_hash, ref_code, created_at) VALUES (?,?,?,?)')
+      .run(name, hashKey(key), refCode, Date.now());
+    const id = this.db.prepare('SELECT last_insert_rowid() id').get().id;
+    return { id, name, key, ref_code: refCode };
   }
 
   list() {

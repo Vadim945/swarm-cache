@@ -21,6 +21,8 @@ const GEN_COST = Number(process.env.GEN_COST || 1.0);      // единиц за 
 const CACHE_COST = Number(process.env.CACHE_COST || 0.1);  // единиц за кэш-хит
 const MIN_COST = Math.min(GEN_COST, CACHE_COST);
 const FREE_BONUS = Number(process.env.FREE_BONUS || 10.0); // стартовый бонус бета-ключам
+const REFERRAL_BONUS = Number(process.env.REFERRAL_BONUS || 2.0);        // бонус за приглашение (обоим)
+const REFERRAL_MAX_PER_DAY = Number(process.env.REFERRAL_MAX_PER_DAY || 5); // лимит начислений рефереру/сутки
 
 class Billing {
   constructor(dbPath = DB_PATH) {
@@ -37,6 +39,13 @@ class Billing {
         delta REAL NOT NULL,
         kind TEXT NOT NULL,          -- 'bonus' | 'credit' | 'charge'
         note TEXT,
+        ts INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS user_referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL UNIQUE,
+        referred_by INTEGER NOT NULL,
+        bonus REAL NOT NULL,
         ts INTEGER NOT NULL
       );
     `);
@@ -78,6 +87,29 @@ class Billing {
     return this.debit(userId, cached ? CACHE_COST : GEN_COST, cached ? 'cache hit' : 'llm generation');
   }
 
+  /**
+   * Реферальная программа: новый пользователь регистрируется с кодом пригласившего.
+   * Обоим начисляется REFERRAL_BONUS. Защита: само-рефералка, повторные начисления,
+   * лимит начислений рефереру в сутки.
+   */
+  applyReferral(newUserId, refCode) {
+    if (!refCode || typeof refCode !== 'string') return { ok: false, reason: 'empty ref code' };
+    const referrer = this.db.prepare('SELECT id FROM users WHERE ref_code = ? AND revoked = 0').get(refCode.trim());
+    if (!referrer) return { ok: false, reason: 'invalid ref code' };
+    if (referrer.id === newUserId) return { ok: false, reason: 'self referral not allowed' };
+    const exists = this.db.prepare('SELECT id FROM user_referrals WHERE user_id = ?').get(newUserId);
+    if (exists) return { ok: false, reason: 'already referred' };
+    const dayAgo = Date.now() - 24 * 3600 * 1000;
+    const cnt = this.db.prepare('SELECT COUNT(*) c FROM user_referrals WHERE referred_by = ? AND ts > ?')
+      .get(referrer.id, dayAgo).c;
+    if (cnt >= REFERRAL_MAX_PER_DAY) return { ok: false, reason: 'referrer daily limit reached' };
+    this.credit(newUserId, REFERRAL_BONUS, 'referral bonus (invited)');
+    this.credit(referrer.id, REFERRAL_BONUS, 'referral reward (new user via ref)');
+    this.db.prepare('INSERT INTO user_referrals (user_id, referred_by, bonus, ts) VALUES (?,?,?,?)')
+      .run(newUserId, referrer.id, REFERRAL_BONUS, Date.now());
+    return { ok: true, bonus: REFERRAL_BONUS, referrer_id: referrer.id, referrer_balance: this.getBalance(referrer.id) };
+  }
+
   list() {
     return this.db.prepare(`
       SELECT u.id, u.name, u.revoked, COALESCE(b.credits, 0) AS credits
@@ -91,4 +123,4 @@ class Billing {
   }
 }
 
-module.exports = { Billing, GEN_COST, CACHE_COST, MIN_COST, FREE_BONUS };
+module.exports = { Billing, GEN_COST, CACHE_COST, MIN_COST, FREE_BONUS, REFERRAL_BONUS };

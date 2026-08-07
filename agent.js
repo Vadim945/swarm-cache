@@ -14,7 +14,7 @@ const fs = require('fs');
 const express = require('express');
 const { CacheKeeper, LOCAL_AGENT } = require('./skills/cache-keeper/handler.js');
 const { UserAuth } = require('./auth.js');
-const { Billing, GEN_COST, CACHE_COST, FREE_BONUS } = require('./billing.js');
+const { Billing, GEN_COST, CACHE_COST, FREE_BONUS, REFERRAL_BONUS } = require('./billing.js');
 
 const PORT = Number(process.env.SWARM_PORT || 3333);
 const HOST = process.env.SWARM_HOST || '127.0.0.1';
@@ -52,6 +52,24 @@ async function main() {
     arr.push(Date.now());
     regCounters.set(ip, arr);
   };
+
+  // --- Демо-режим: бесплатные вопросы без ключа (DEMO_DAILY/сутки с IP) ---
+  const DEMO_DAILY = Number(process.env.DEMO_DAILY || 3);
+  const demoTimestamps = new Map(); // ip -> [ts]
+  const demoLeft = (ip) => {
+    const now = Date.now();
+    const day = 24 * 3600 * 1000;
+    let arr = demoTimestamps.get(ip) || [];
+    arr = arr.filter((t) => now - t < day);
+    demoTimestamps.set(ip, arr);
+    return Math.max(0, DEMO_DAILY - arr.length);
+  };
+  const canDemo = (ip) => demoLeft(ip) > 0;
+  const markDemo = (ip) => {
+    const arr = demoTimestamps.get(ip) || [];
+    arr.push(Date.now());
+    demoTimestamps.set(ip, arr);
+  };
   const requireKey = (req, res, next) => {
     const key = req.headers['x-api-key'];
     const user = auth.auth(key);
@@ -72,39 +90,74 @@ async function main() {
   });
 
   // --- Self-serve регистрация: имя -> ключ + бонус (без ручной раздачи) ---
+  // Поддерживает реферальный код: body.ref или query ?ref= (для share-ссылок)
   app.post('/register', (req, res) => {
     const name = req.body && typeof req.body.name === 'string' ? req.body.name.trim().slice(0, 40) : '';
     if (!name) return res.status(400).json({ error: 'field "name" (string) is required' });
+    const ref = (req.body && typeof req.body.ref === 'string' ? req.body.ref : (req.query.ref || '')).toString().trim().slice(0, 24);
     const ip = clientIp(req);
     if (!canRegister(ip)) {
       return res.status(429).json({ error: 'registration limit reached for this IP (max ' + REG_DAILY_LIMIT + ' per day)' });
     }
     try {
-      const { id, key } = auth.createKey(name);
+      const { id, key, ref_code } = auth.createKey(name);
+      const referral = ref ? billing.applyReferral(id, ref) : null;
       billing.credit(id, FREE_BONUS, 'self-serve beta bonus');
       markRegistered(ip);
-      res.json({ ok: true, user_id: id, name, key, bonus: FREE_BONUS, credits: FREE_BONUS });
+      res.json({
+        ok: true,
+        user_id: id,
+        name,
+        key,
+        ref_code,
+        share_link: 'https://swarm.telscan.ru/?ref=' + ref_code,
+        bonus: FREE_BONUS,
+        referral_bonus: REFERRAL_BONUS,
+        referral: referral ? { ok: referral.ok, bonus: referral.ok ? referral.bonus : 0, reason: referral.ok ? null : referral.reason } : null,
+        credits: billing.getBalance(id),
+      });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  app.post('/ask', requireKey, async (req, res) => {
+  app.post('/ask', async (req, res) => {
     const question = req.body && typeof req.body.question === 'string' ? req.body.question.trim() : '';
     if (!question) return res.status(400).json({ error: 'field "question" (string) is required' });
-    const bal = billing.getBalance(req.user.id);
-    if (bal < CACHE_COST) {
-      return res.status(402).json({ error: 'insufficient balance', balance: bal, minCost: CACHE_COST });
+
+    // 1) зарегистрированный пользователь (ключ) ИЛИ демо-режим (без ключа, DEMO_DAILY/сутки с IP)
+    const key = req.headers['x-api-key'];
+    const user = key ? auth.auth(key) : null;
+    let demo = false;
+    let ip = null;
+    if (user) {
+      if (!auth.rateLimit(user.id)) {
+        return res.status(429).json({ error: 'rate limit exceeded (per minute)', retryAfterSec: 60 });
+      }
+    } else {
+      ip = clientIp(req);
+      if (!canDemo(ip)) {
+        return res.status(429).json({ error: 'demo limit reached: ' + DEMO_DAILY + ' free questions per day — register to continue', demo_left: 0 });
+      }
+      if (!auth.rateLimit(ip)) {
+        return res.status(429).json({ error: 'rate limit exceeded (per minute)', retryAfterSec: 60 });
+      }
+      markDemo(ip);
+      demo = true;
     }
+
+    // 2) проверка баланса (только для зарегистрированных)
+    if (!demo) {
+      const bal = billing.getBalance(user.id);
+      if (bal < CACHE_COST) {
+        return res.status(402).json({ error: 'insufficient balance', balance: bal, minCost: CACHE_COST });
+      }
+    }
+
     try {
       const r = await keeper.ask(question);
-      // списываем по факту: кэш-хит дешевле генерации
-      const charge = billing.charge(req.user.id, !!r.cached);
-      if (!charge.ok) {
-        return res.status(402).json({ error: charge.reason, balance: charge.balance, need: charge.need });
-      }
       const prefix = r.cached ? (r.p2p ? '[P2P Cached] ' : '[Cached] ') : '';
-      res.json({
+      const base = {
         answer: prefix + r.answer,
         cached: r.cached,
         p2p: r.p2p,
@@ -114,8 +167,20 @@ async function main() {
         provider: r.provider ?? (r.cached ? 'cache' : null),
         timeMs: r.timeMs,
         payment: r.payment ?? null,
+      };
+      if (demo) {
+        return res.json({ ...base, demo: true, demo_left: demoLeft(ip), cost: 0, balance_after: null });
+      }
+      const charge = billing.charge(user.id, !!r.cached);
+      if (!charge.ok) {
+        return res.status(402).json({ error: charge.reason, balance: charge.balance, need: charge.need });
+      }
+      res.json({
+        ...base,
+        demo: false,
         cost: r.cached ? CACHE_COST : GEN_COST,
         balance_after: charge.balance,
+        ref_code: user.ref_code || null,
       });
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -127,6 +192,8 @@ async function main() {
     res.json({
       user_id: req.user.id,
       user_name: req.user.name,
+      ref_code: req.user.ref_code || null,
+      share_link: 'https://swarm.telscan.ru/?ref=' + (req.user.ref_code || ''),
       credits: billing.getBalance(req.user.id),
       gen_cost: GEN_COST,
       cache_cost: CACHE_COST,
@@ -135,7 +202,14 @@ async function main() {
   });
 
   app.get('/pricing', (req, res) => {
-    res.json({ gen_cost: GEN_COST, cache_cost: CACHE_COST, free_bonus: FREE_BONUS, unit: 'credits' });
+    res.json({
+      gen_cost: GEN_COST,
+      cache_cost: CACHE_COST,
+      free_bonus: FREE_BONUS,
+      referral_bonus: REFERRAL_BONUS,
+      demo_free_questions: Number(process.env.DEMO_DAILY || 3),
+      unit: 'credits',
+    });
   });
 
   app.get('/stats', requireKey, (req, res) => {
