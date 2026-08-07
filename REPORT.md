@@ -106,3 +106,11 @@ cd /clients/322265183/swarm-cache
 #   const { CacheKeeper } = require('./skills/cache-keeper/handler.js');
 #   const keeper = await new CacheKeeper().init();
 #   const r = await keeper.ask('...'); // r.answer, r.cached, r.p2p
+
+=== ПУБЛИЧНЫЙ ШЛЮЗ (шаг 1: API-ключи + rate limit + HTTPS) ===
+- Домен: https://swarm.telscan.ru (A-запись -> 5.129.222.219, NS timeweb).
+- TLS: Let's Encrypt через certbot --nginx (истекает 2026-11-05, авто-renew настроен).
+- nginx: /etc/nginx/sites-available/swarm-cache (http->https 301, proxy_pass 127.0.0.1:3333).
+- Авторизация: X-API-Key (SHA-256 в data/users.db), CLI: node apikey.js add|list|revoke.
+- Rate limit: 30 req/мин на пользователя (проверено: 30x200 -> 429).
+- Проверено извне (через публичный IP): /ask 200 (кэш-хит 19 мс), без ключа 401, /health OK.
