@@ -1,0 +1,134 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Как работает Swarm Cache — семантический кэш</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f8fafc;
+    --fg: #172033;
+    --muted: #5b6475;
+    --line: #64748b;
+    --neutral: #e2e8f0;
+    --input: #bfdbfe;
+    --process: #c7d2fe;
+    --storage: #99f6e4;
+    --external: #fde68a;
+    --risk: #fecaca;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a;
+      --fg: #e5e7eb;
+      --muted: #a3adbd;
+      --line: #94a3b8;
+      --neutral: #334155;
+      --input: #1d4ed8;
+      --process: #4338ca;
+      --storage: #0f766e;
+      --external: #92400e;
+      --risk: #991b1b;
+    }
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 980px; margin: 32px auto; padding: 0 20px; }
+  svg { width: 100%; height: auto; display: block; }
+  .title { font-size: 20px; font-weight: 650; fill: var(--fg); }
+  .label { font-size: 14px; font-weight: 600; fill: var(--fg); }
+  .small { font-size: 12px; fill: var(--muted); }
+  .node { stroke: var(--line); stroke-width: 1; }
+  .neutral { fill: var(--neutral); }
+  .input { fill: var(--input); }
+  .process { fill: var(--process); }
+  .storage { fill: var(--storage); }
+  .external { fill: var(--external); }
+  .risk { fill: var(--risk); }
+  .edge { stroke: var(--line); stroke-width: 1.5; fill: none; }
+  .zone { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 6 5; opacity: 0.8; }
+</style>
+<main>
+<svg viewBox="0 0 900 460" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Схема семантического кэша">
+  <text x="20" y="34" class="title">Как работает семантический кэш</text>
+
+  <!-- зона: пользователь -->
+  <rect x="20" y="70" width="180" height="150" rx="10" class="zone" />
+  <text x="110" y="92" text-anchor="middle" class="small">Пользователь / API</text>
+  <rect x="40" y="105" width="140" height="46" rx="8" class="input node" />
+  <text x="110" y="126" text-anchor="middle" class="label">Вопрос</text>
+  <text x="110" y="142" text-anchor="middle" class="small">«как работает attention»</text>
+
+  <rect x="40" y="165" width="140" height="40" rx="8" class="neutral node" />
+  <text x="110" y="190" text-anchor="middle" class="label">Ответ</text>
+
+  <!-- стрелка вопрос -->
+  <path d="M 180 128 L 232 128" class="edge" marker-end="url(#arr)" />
+  <!-- стрелка ответ -->
+  <path d="M 232 185 L 180 185" class="edge" marker-end="url(#arr)" />
+
+  <!-- центр: обработка -->
+  <rect x="240" y="70" width="200" height="150" rx="10" class="zone" />
+  <text x="340" y="92" text-anchor="middle" class="small">Обработка</text>
+
+  <rect x="258" y="105" width="164" height="46" rx="8" class="process node" />
+  <text x="340" y="126" text-anchor="middle" class="label">Эмбеддинг + поиск</text>
+  <text x="340" y="142" text-anchor="middle" class="small">похожесть с сохранённым?</text>
+
+  <rect x="258" y="165" width="164" height="40" rx="8" class="risk node" />
+  <text x="340" y="190" text-anchor="middle" class="label">Совпадения нет → LLM</text>
+
+  <!-- стрелки к решению -->
+  <path d="M 340 151 L 340 163" class="edge" marker-end="url(#arr)" />
+
+  <!-- правая зона: кэш -->
+  <rect x="500" y="70" width="180" height="150" rx="10" class="zone" />
+  <text x="590" y="92" text-anchor="middle" class="small">Семантический кэш</text>
+  <rect x="520" y="105" width="140" height="46" rx="8" class="storage node" />
+  <text x="590" y="126" text-anchor="middle" class="label">Хранилище ответов</text>
+  <text x="590" y="142" text-anchor="middle" class="small">SQLite + эмбеддинги</text>
+
+  <rect x="520" y="165" width="140" height="40" rx="8" class="neutral node" />
+  <text x="590" y="190" text-anchor="middle" class="label">Сохранение нового</text>
+
+  <!-- стрелки: поиск в кэш, ответ из кэша -->
+  <path d="M 340 128 C 420 128, 440 128, 518 128" class="edge" marker-end="url(#arr)" />
+  <text x="440" y="118" text-anchor="middle" class="small">поиск</text>
+
+  <!-- стрелка хит: кэш -> ответ -->
+  <path d="M 518 185 C 420 185, 400 185, 180 185" class="edge" marker-end="url(#arr)" style="stroke:#0f766e;stroke-width:2" />
+  <text x="380" y="215" text-anchor="middle" class="small" style="fill:#0f766e">⚡ кэш-хит: 15 мс, 0.1 ед (если совпадение &gt; 0.70)</text>
+
+  <!-- внешняя зона: LLM -->
+  <rect x="740" y="70" width="140" height="150" rx="10" class="zone" />
+  <text x="810" y="92" text-anchor="middle" class="small">Внешний LLM</text>
+  <rect x="756" y="105" width="108" height="46" rx="8" class="external node" />
+  <text x="810" y="126" text-anchor="middle" class="label">DeepSeek V4</text>
+  <text x="810" y="142" text-anchor="middle" class="small">генерация 5–9 с</text>
+
+  <!-- стрелка: нет совпадения -> LLM -->
+  <path d="M 422 185 C 560 185, 620 140, 754 132" class="edge" marker-end="url(#arr)" />
+  <text x="560" y="175" text-anchor="middle" class="small">запрос</text>
+
+  <!-- стрелка: LLM -> сохранение -->
+  <path d="M 756 152 C 700 190, 680 200, 662 185" class="edge" marker-end="url(#arr)" />
+  <text x="700" y="212" text-anchor="middle" class="small">ответ → сохранить</text>
+
+  <!-- легенда -->
+  <g transform="translate(20, 260)">
+    <rect x="0" y="0" width="16" height="16" rx="4" class="storage node" /><text x="22" y="13" class="small">кэш</text>
+    <rect x="80" y="0" width="16" height="16" rx="4" class="external node" /><text x="102" y="13" class="small">внешний LLM</text>
+    <rect x="190" y="0" width="16" height="16" rx="4" class="risk node" /><text x="212" y="13" class="small">дорогой путь (1 ед)</text>
+    <text x="330" y="13" class="small" style="fill:#0f766e">⚡ быстрый путь (0.1 ед)</text>
+  </g>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line)" />
+    </marker>
+  </defs>
+</svg>
+</main>

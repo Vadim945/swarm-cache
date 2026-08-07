@@ -1,0 +1,125 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Как работает рой Swarm Cache — P2P-обмен</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f8fafc;
+    --fg: #172033;
+    --muted: #5b6475;
+    --line: #64748b;
+    --neutral: #e2e8f0;
+    --input: #bfdbfe;
+    --process: #c7d2fe;
+    --storage: #99f6e4;
+    --external: #fde68a;
+    --risk: #fecaca;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a;
+      --fg: #e5e7eb;
+      --muted: #a3adbd;
+      --line: #94a3b8;
+      --neutral: #334155;
+      --input: #1d4ed8;
+      --process: #4338ca;
+      --storage: #0f766e;
+      --external: #92400e;
+      --risk: #991b1b;
+    }
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 980px; margin: 32px auto; padding: 0 20px; }
+  svg { width: 100%; height: auto; display: block; }
+  .title { font-size: 20px; font-weight: 650; fill: var(--fg); }
+  .label { font-size: 14px; font-weight: 600; fill: var(--fg); }
+  .small { font-size: 12px; fill: var(--muted); }
+  .node { stroke: var(--line); stroke-width: 1; }
+  .neutral { fill: var(--neutral); }
+  .input { fill: var(--input); }
+  .process { fill: var(--process); }
+  .storage { fill: var(--storage); }
+  .external { fill: var(--external); }
+  .risk { fill: var(--risk); }
+  .edge { stroke: var(--line); stroke-width: 1.5; fill: none; }
+  .zone { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 6 5; opacity: 0.8; }
+</style>
+<main>
+<svg viewBox="0 0 900 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Схема P2P-роя">
+  <text x="20" y="34" class="title">Как работает рой: один спросил — все знают</text>
+
+  <!-- Агент A (лево) -->
+  <rect x="30" y="90" width="230" height="230" rx="12" class="zone" />
+  <text x="145" y="112" text-anchor="middle" class="label">Агент A</text>
+  <rect x="50" y="125" width="90" height="42" rx="8" class="process node" />
+  <text x="95" y="150" text-anchor="middle" class="small">Вопрос</text>
+  <rect x="150" y="125" width="90" height="42" rx="8" class="external node" />
+  <text x="195" y="150" text-anchor="middle" class="small">LLM: генерит</text>
+  <rect x="50" y="185" width="190" height="42" rx="8" class="storage node" />
+  <text x="145" y="210" text-anchor="middle" class="label">Свой кэш</text>
+  <rect x="50" y="245" width="190" height="46" rx="8" class="neutral node" />
+  <text x="145" y="266" text-anchor="middle" class="small">Публикует ответ</text>
+  <text x="145" y="282" text-anchor="middle" class="small">в DAG + анонс в pubsub</text>
+
+  <!-- Агент B (право) -->
+  <rect x="640" y="90" width="230" height="230" rx="12" class="zone" />
+  <text x="755" y="112" text-anchor="middle" class="label">Агент B</text>
+  <rect x="660" y="125" width="190" height="42" rx="8" class="input node" />
+  <text x="755" y="150" text-anchor="middle" class="small">Тот же вопрос</text>
+  <rect x="660" y="185" width="90" height="42" rx="8" class="process node" />
+  <text x="705" y="205" text-anchor="middle" class="small">Поиск</text>
+  <rect x="760" y="185" width="90" height="42" rx="8" class="storage node" />
+  <text x="805" y="205" text-anchor="middle" class="small">Кэш (свой)</text>
+  <rect x="660" y="245" width="190" height="46" rx="8" class="neutral node" />
+  <text x="755" y="266" text-anchor="middle" class="small">Ответ из роя</text>
+  <text x="755" y="282" text-anchor="middle" class="small">⚡ 9–18 мс</text>
+
+  <!-- центр: pubsub -->
+  <rect x="330" y="120" width="240" height="160" rx="12" class="zone" />
+  <text x="450" y="145" text-anchor="middle" class="label">IPFS pubsub</text>
+  <text x="450" y="165" text-anchor="middle" class="small">топик «swarm-cache»</text>
+  <circle cx="390" cy="215" r="26" class="neutral node" />
+  <text x="390" y="220" text-anchor="middle" class="small">анонс</text>
+  <circle cx="510" cy="215" r="26" class="neutral node" />
+  <text x="510" y="220" text-anchor="middle" class="small">CID</text>
+
+  <!-- стрелки A -> pubsub -->
+  <path d="M 240 268 C 290 268, 300 215, 362 215" class="edge" marker-end="url(#arr)" />
+  <text x="285" y="258" text-anchor="middle" class="small">1. публикация</text>
+
+  <!-- стрелки pubsub -> B -->
+  <path d="M 418 215 C 470 215, 520 240, 660 262" class="edge" marker-end="url(#arr)" />
+  <text x="540" y="240" text-anchor="middle" class="small">2. получает анонс</text>
+
+  <!-- стрелка B -> DAG (получение контента) -->
+  <path d="M 660 205 C 590 175, 560 150, 520 190" class="edge" marker-end="url(#arr)" style="stroke:#0f766e;stroke-width:2" />
+  <text x="560" y="178" text-anchor="middle" class="small">3. тянет по CID</text>
+
+  <!-- низ: платёж -->
+  <rect x="330" y="330" width="240" height="46" rx="8" class="risk node" />
+  <text x="450" y="350" text-anchor="middle" class="label">⚡ Микро-платёж автору</text>
+  <text x="450" y="366" text-anchor="middle" class="small">L402: 1 сатоши за первый ответ</text>
+  <path d="M 510 330 L 510 292" class="edge" marker-end="url(#arr)" />
+
+  <!-- легенда -->
+  <g transform="translate(30, 360)">
+    <rect x="0" y="0" width="16" height="16" rx="4" class="external node" /><text x="22" y="13" class="small">LLM (дорого)</text>
+    <rect x="110" y="0" width="16" height="16" rx="4" class="storage node" /><text x="132" y="13" class="small">кэш</text>
+    <rect x="190" y="0" width="16" height="16" rx="4" class="neutral node" /><text x="212" y="13" class="small">pubsub/DAG</text>
+    <rect x="290" y="0" width="16" height="16" rx="4" class="risk node" /><text x="312" y="13" class="small">платежи</text>
+  </g>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line)" />
+    </marker>
+  </defs>
+</svg>
+</main>
