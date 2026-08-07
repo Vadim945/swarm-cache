@@ -184,7 +184,7 @@ class CacheKeeper {
     }
 
     // 3) Генерация + публикация в рой
-    const gen = this.generate(question);
+    const gen = await this.generate(question);
     this.addToCache(question, gen.answer, emb, { source: 'generated', agent: LOCAL_AGENT });
     this.publishP2P(qhash, question, gen.answer).catch(() => {});
     return {
@@ -196,14 +196,47 @@ class CacheKeeper {
 
   /* ---------- «LLM» (заглушка-генератор) ---------- */
 
-  generate(question) {
+  /**
+   * Генерация ответа: реальный LLM (DeepSeek API, ключ из env DEEPSEEK_API_KEY)
+   * или локальная заглушка, если ключа нет. Токены — из usage ответа API (честные метрики).
+   */
+  async generate(question) {
+    const key = process.env.DEEPSEEK_API_KEY;
+    if (key) {
+      try {
+        const resp = await fetch('https://api.deepseek.com/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
+          body: JSON.stringify({
+            model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+            messages: [
+              { role: 'system', content: 'Ты — экспертный помощник. Отвечай кратко, по делу, по-русски.' },
+              { role: 'user', content: question },
+            ],
+            temperature: 0.3,
+            max_tokens: 512,
+            stream: false,
+          }),
+        });
+        if (!resp.ok) throw new Error('DeepSeek API HTTP ' + resp.status);
+        const data = await resp.json();
+        const answer = (data.choices && data.choices[0] && data.choices[0].message.content) || '';
+        if (!answer) throw new Error('empty answer');
+        const tokens = (data.usage && data.usage.total_tokens) || null;
+        this._log(`LLM: question="${question.slice(0, 50)}..." tokens=${tokens} (usage)`);
+        return { answer, tokens, provider: 'deepseek' };
+      } catch (e) {
+        this._log('⚠ DeepSeek API error: ' + e.message + ' — fallback to simulator');
+      }
+    }
+    // Фолбэк: локальная заглушка (без API-ключа)
     const words = question.trim().split(/\s+/).length;
     const tokens = Math.max(24, Math.round(words * 2.4));
     const answer =
       `[simulated-LLM] Разбор запроса: «${question}». ` +
       `Это комплексная тема: ключевые аспекты — архитектура решения, принципы работы и практическое применение. ` +
       `Рекомендуется изучить профильную документацию и специализированные источники для полного ответа.`;
-    return { answer, tokens };
+    return { answer, tokens, provider: 'simulator' };
   }
 
   /* ---------- P2P / IPFS ---------- */

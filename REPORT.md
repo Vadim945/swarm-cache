@@ -18,6 +18,15 @@
   (ClawHub CLI не найден; пакет @openclaw/clawhub отсутствует в npm, E404 → публикация в локальный Git по 6.4)
 - Вывод: прототип полностью работоспособен ✅
 
+=== ЖИВОЙ СЕРВИС (претворено в жизнь) ===
+- HTTP API: POST /ask, GET /balance, GET /stats, GET /health — http://127.0.0.1:3333 (agent.js, Express).
+- systemd: swarm-cache.service (автозапуск, Restart=always, After=docker) — активен.
+- Реальный LLM-провайдер: DeepSeek API (DEEPSEEK_API_KEY из .env), честные токены из usage;
+  без ключа — фолбэк на локальную заглушку.
+- Сквозной сценарий 7.1-7.3 через HTTP: cold 18ms, repeat 21ms (sim=1.0), семантический близнец 21ms (sim=0.7185).
+- Как включить реальный LLM:
+    echo 'DEEPSEEK_API_KEY=sk-...' > /clients/322265183/swarm-cache/.env && chmod 600 .env && systemctl restart swarm-cache
+
 === Как собрано ===
 - Стек: better-sqlite3 + sqlite-vec v0.1.9 (vec0, cosine, k=10), локальные эмбеддинги
   Xenova/paraphrase-multilingual-MiniLM-L12-v2 (384d, transformers.js), IPFS kubo (Docker),

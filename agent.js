@@ -1,0 +1,68 @@
+'use strict';
+/**
+ * agent.js — живой HTTP-сервис Swarm Cache (рантайм навыка cache-keeper).
+ *
+ * POST /ask    { "question": "..." }  -> ответ с метками cached/p2p и временем
+ * GET  /balance [/?agent=peer-A]      -> балансы (L402-эмулятор)
+ * GET  /stats                         -> статистика кэша/P2P/платежей
+ * GET  /health                        -> живость сервиса
+ *
+ * Порт 3333, слушает 127.0.0.1 (безопасно; наружу не торчит).
+ */
+const path = require('path');
+const express = require('express');
+const { CacheKeeper, LOCAL_AGENT } = require('./skills/cache-keeper/handler.js');
+
+const PORT = Number(process.env.SWARM_PORT || 3333);
+const HOST = process.env.SWARM_HOST || '127.0.0.1';
+
+async function main() {
+  const keeper = await new CacheKeeper({
+    model: process.env.EMBED_MODEL || 'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
+    threshold: Number(process.env.SIM_THRESHOLD || 0.70),
+  }).init();
+
+  const app = express();
+  app.use(express.json({ limit: '1mb' }));
+
+  app.post('/ask', async (req, res) => {
+    const question = req.body && typeof req.body.question === 'string' ? req.body.question.trim() : '';
+    if (!question) return res.status(400).json({ error: 'field "question" (string) is required' });
+    try {
+      const r = await keeper.ask(question);
+      const prefix = r.cached ? (r.p2p ? '[P2P Cached] ' : '[Cached] ') : '';
+      res.json({
+        answer: prefix + r.answer,
+        cached: r.cached,
+        p2p: r.p2p,
+        source: r.source,
+        similarity: r.similarity ?? null,
+        tokens: r.tokens ?? null,
+        provider: r.provider ?? (r.cached ? 'cache' : null),
+        timeMs: r.timeMs,
+        payment: r.payment ?? null,
+      });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/balance', (req, res) => {
+    const agent = (req.query.agent || LOCAL_AGENT).toString();
+    res.json({ agent, balance_sats: keeper.balance(agent) });
+  });
+
+  app.get('/stats', (req, res) => {
+    res.json(keeper.stats());
+  });
+
+  app.get('/health', (req, res) => res.json({ ok: true, ts: Date.now() }));
+
+  app.listen(PORT, HOST, () => {
+    console.log(`[swarm-agent] HTTP сервис слушает http://${HOST}:${PORT}`);
+    console.log(`[swarm-agent] P2P: ${keeper.p2pEnabled ? 'вкл (peer ' + keeper._peerId + ')' : 'выкл'}`);
+    console.log(`[swarm-agent] LLM: ${process.env.DEEPSEEK_API_KEY ? 'DeepSeek API' : 'заглушка (нет DEEPSEEK_API_KEY)'}`);
+  });
+}
+
+main().catch((e) => { console.error('[swarm-agent] FATAL:', e); process.exit(1); });
