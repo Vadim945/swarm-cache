@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Swarm Cache — быстрые и дешёвые ответы ИИ</title>
+<title>Swarm Cache — коллективная память для OpenClaw</title>
 <style>
   :root { --bg:#0f1420; --card:#171e2e; --accent:#4f8cff; --green:#3ddc84; --text:#e8edf7; --muted:#8b95ab; }
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -71,20 +71,20 @@
   <div class="logo">🐝 SWARM <span>CACHE</span></div>
 
   <div class="hero">
-    <h1>Быстрые и дешёвые ответы ИИ.<br>Повторные вопросы — <span class="grad">мгновенно</span>.</h1>
+    <h1>Коллективная память для твоего OpenClaw.<br>Повторные вопросы — <span class="grad">мгновенно</span>.</h1>
     <p class="lead">
-      Swarm Cache — это сервис, который отвечает на вопросы с помощью ИИ <b>и запоминает ответы</b>.
-      Когда кто-то задаёт такой же или похожий вопрос — ответ приходит из «памяти» за <b>миллисекунды</b>,
-      а не за 5–9 секунд, и стоит <b>в 10 раз дешевле</b>.
+      Swarm Cache — скилл для OpenClaw, который подключает твоего агента к <b>общему рою памяти</b>.
+      Перед генерацией агент спрашивает рой: если вопрос уже кто-то задавал — ответ приходит из «памяти»
+      за <b>миллисекунды</b>, без траты токенов. Свои ответы публикуй в рой — база растёт и помогает всем.
     </p>
     <div class="analogy">
       💡 Представь умного секретаря: первый вопрос он переспрашивает у начальника (долго и дорого),
-      а на повторные отвечает сам, сразу. Чем больше вопросов — тем быстрее и дешевле работа.
+      а на повторные отвечает сам, сразу. Чем больше участников роя — тем быстрее и дешевле работают все.
     </div>
   </div>
 
   <div class="demo">
-    <label>🎯 Попробуй прямо сейчас — бесплатно, 3 вопроса в день</label>
+    <label>🎯 Живое демо роя — попробуй без установки</label>
     <div class="row">
       <input type="text" id="dq" placeholder="Например: объясни, как работает Attention в нейросетях" maxlength="300">
       <button class="btn" id="dask">Спросить</button>
@@ -94,40 +94,44 @@
 
   <h2>Зачем это нужно</h2>
   <div class="why">
-    <div class="card"><div class="t">⚡ Быстро</div><p>Повторный ответ приходит за ~15 мс вместо 5–9 секунд ожидания.</p></div>
-    <div class="card"><div class="t">💰 Дёшево</div><p>Повторный вопрос стоит 0.1 ед, новый — 1 ед. Экономия до 90%.</p></div>
+    <div class="card"><div class="t">⚡ Быстро</div><p>Повторный ответ приходит за ~15 мс вместо 5–9 секунд генерации.</p></div>
+    <div class="card"><div class="t">💰 Экономия токенов</div><p>Кэш-хиты не тратят токены на генерацию — экономия 70–90% на повторяющихся вопросах.</p></div>
     <div class="card"><div class="t">🧠 Умно</div><p>Понимает смысл: «что такое attention» и «как работает attention» — это один ответ.</p></div>
+    <div class="card"><div class="t">🕸 Рой</div><p>Каждый установивший скилл — новая нода. Ответы обмениваются через IPFS pubsub.</p></div>
   </div>
 
   <h2>Кому подойдёт</h2>
   <div class="who">
-    <b>Чат-ботам и поддержке</b> — клиенты задают одно и то же: отвечайте из кэша, не тратя деньги на ИИ.<br>
-    <b>FAQ и справочникам</b> — сотни одинаковых вопросов с мгновенными ответами.<br>
+    <b>OpenClaw-агентам</b> — ставь скилл, твой агент сам спрашивает рой перед генерацией: экономия токенов до 80% и ответы за миллисекунды.<br>
+    <b>Локальным ИИ-инфраструктурам</b> — все внутри своих приложений, рой обменивается ответами между ними.<br>
     <b>Любому сервису с ИИ</b> — меньше расходов на API, быстрее отклик.
   </div>
 
   <h2>Как начать — 3 шага</h2>
   <div class="steps">
-    <div class="step"><div class="n">1</div><div class="b"><div class="t">Попробуй</div><p>Задай вопрос в демо выше — бесплатно, без регистрации.</p></div></div>
-    <div class="step"><div class="n">2</div><div class="b"><div class="t">Получи ключ</div><p>Введи имя ниже — получишь ключ доступа и <b>10 бесплатных вопросов</b> в подарок.</p></div></div>
-    <div class="step"><div class="n">3</div><div class="b"><div class="t">Подключи</div><p>Один HTTP-запрос — и твой сервис отвечает через Swarm Cache.</p></div></div>
+    <div class="step"><div class="n">1</div><div class="b"><div class="t">Установи скилл</div><p>Скопируй папку <b>swarm-cache</b> в свой OpenClaw workspace: <code>skills/</code> (README на GitHub).</p></div></div>
+    <div class="step"><div class="n">2</div><div class="b"><div class="t">Зарегистрируйся</div><p><code>node swarm.mjs register "Твоё имя"</code> — получишь ключ и <b>+10 кредитов</b> на старт. Полностью бесплатно, без лимитов.</p></div></div>
+    <div class="step"><div class="n">3</div><div class="b"><div class="t">Пользуйся</div><p>Агент сам спрашивает рой перед генерацией. Свой ответ публикуй в рой — получай +0.5 кредита за вклад.</p></div></div>
   </div>
 
-  <pre><code>curl -X POST https://swarm.telscan.ru/ask \
-  -H "X-API-Key: ТВОЙ_КЛЮЧ" \
-  -H "Content-Type: application/json" \
-  -d '{"question":"Что такое Attention?"}'</code></pre>
+  <pre><code># установка скилла (GitHub):
+cp -r swarm-cache ~/.openclaw/workspace/skills/
+node ~/.openclaw/workspace/skills/swarm-cache/swarm.mjs register "Твоё имя"
 
-  <h2>Получить ключ бесплатно</h2>
+# спросить рой / опубликовать ответ:
+node swarm.mjs ask "Что такое Attention?"
+node swarm.mjs publish "вопрос" "ответ"</code></pre>
+
+  <h2>Регистрация в рое — бесплатно</h2>
   <div class="cta">
     <input type="text" class="reg" id="name" placeholder="Ваше имя или ник" maxlength="40">
     <input type="text" class="reg" id="ref" placeholder="Реф-код (если пригласили)" maxlength="24" style="flex:0 0 170px">
-    <button class="btn" id="getkey">Получить ключ</button>
+    <button class="btn" id="getkey">Зарегистрироваться</button>
   </div>
   <div class="keybox" id="keybox">
     Ваш API-ключ (сохраните — показывается один раз):
     <div class="k" id="keyval"></div>
-    <div class="warn">⚠️ 10 бесплатных вопросов уже начислены. Храните ключ в секрете.</div>
+    <div class="warn">🎁 +10 ед начислены бонусом. Полностью бесплатно, без лимитов. Храните ключ в секрете.</div>
     <div style="margin-top:10px">Ваш реферальный код (друзья получат +2 ед, и вы тоже):</div>
     <div class="ref" id="refval"></div>
     <div class="muted" id="shareval"></div>
@@ -136,20 +140,20 @@
 
   <h2>Сколько это стоит</h2>
   <div class="pricing">
-    <div class="pr"><div class="c">1 ед</div><div class="l">Новый вопрос — ИИ думает и отвечает</div></div>
-    <div class="pr"><div class="c">0.1 ед</div><div class="l">Повторный или похожий — из памяти, мгновенно</div></div>
+    <div class="pr"><div class="c">0 ₽</div><div class="l">Полностью бесплатно · без лимитов и блокировок</div></div>
+    <div class="pr"><div class="c">+0.5 ед</div><div class="l">Начисляется за каждый опубликованный в рой ответ</div></div>
   </div>
-  <p class="note">🎁 10 ед — бесплатно при регистрации · приведи друга → +2 ед вам обоим</p>
+  <p class="note">🎁 +10 ед при регистрации · приведи друга → +2 ед вам обоим · 💚 поддержать проект можно донатом</p>
 
   <h2>Частые вопросы</h2>
   <div class="faq">
-    <details><summary>Что значит «из памяти»?</summary><p>Сервис запоминает каждый ответ. Если вопрос задают снова (или похожий по смыслу) — он не вызывает ИИ, а отдаёт готовый ответ. Это как кэш в браузере, только умный.</p></details>
-    <details><summary>Что такое «единицы» (ед)?</summary><p>Это внутренняя валюта сервиса. 1 ед ≈ один новый вопрос. Повторный стоит 0.1 ед. При регистрации вы получаете 10 ед бесплатно — этого хватит на полноценное знакомство.</p></details>
-    <details><summary>Чем это лучше обычного ИИ-API?</summary><p>Обычный API считает деньги за каждый вопрос. Swarm Cache отвечает на повторные вопросы бесплатно для вас — из памяти. На практике экономия 70–90%.</p></details>
-    <details><summary>Как подключить к своему проекту?</summary><p>Один POST-запрос: отправляете вопрос и ключ, получаете ответ. Подходит для ботов, сайтов, скриптов — что угодно, что умеет HTTP.</p></details>
+    <details><summary>Что значит «из памяти»?</summary><p>Рой запоминает каждый ответ участников. Если вопрос задают снова (или похожий по смыслу) — агент не тратит токены на генерацию, а отдаёт готовый ответ за миллисекунды. Это как кэш в браузере, только умный и коллективный.</p></details>
+    <details><summary>Что такое «единицы» (ед)?</summary><p>Внутренняя валюта. Сейчас всё бесплатно: генерация и кэш-хиты не списывают ничего. Единицы начисляются как бонусы: +10 за регистрацию, +0.5 за публикацию ответа, +2 за реферала.</p></details>
+    <details><summary>Чем это лучше обычного ИИ-API?</summary><p>Обычный API считает деньги за каждый вопрос. Swarm Cache отвечает на повторные вопросы из общей памяти роя — экономия токенов 70–90% и ответы за 15–30 мс вместо секунд генерации.</p></details>
+    <details><summary>Как подключить к своему OpenClaw?</summary><p>Скопируй папку скилла в workspace/skills и запусти register — агент сам начнёт спрашивать рой перед генерацией. Подробная инструкция в README на GitHub.</p></details>
   </div>
 
-  <p class="muted" style="margin-top:26px">Swarm Cache · HTTPS · работает 24/7 · <a href="https://github.com/Vadim945/swarm-cache" style="color:var(--accent)">исходный код</a></p>
+  <p class="muted" style="margin-top:26px">Swarm Cache · скилл для OpenClaw · <a href="https://github.com/Vadim945/swarm-cache" style="color:var(--accent)">GitHub</a> · <a href="https://github.com/Vadim945/swarm-cache-backups" style="color:var(--muted)">бэкапы</a></p>
 </div>
 
 <script>
@@ -211,7 +215,7 @@ dask.addEventListener('click', async () => {
     const d = await r.json();
     if (!r.ok) {
       if (r.status === 429) {
-        dout.innerHTML = '⚠️ ' + d.error + '<div class="meta">Зарегистрируйтесь выше, чтобы продолжить — 10 бесплатных вопросов в подарок.</div>';
+        dout.innerHTML = '⚠️ ' + d.error + '<div class="meta">Зарегистрируйтесь выше — бесплатно, +10 ед бонусом.</div>';
       } else {
         dout.textContent = 'Ошибка: ' + (d.error || r.status);
       }
