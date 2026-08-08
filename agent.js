@@ -14,7 +14,7 @@ const fs = require('fs');
 const express = require('express');
 const { CacheKeeper, LOCAL_AGENT } = require('./skills/cache-keeper/handler.js');
 const { UserAuth } = require('./auth.js');
-const { Billing, GEN_COST, CACHE_COST, FREE_BONUS, DAILY_FREE, REFERRAL_BONUS } = require('./billing.js');
+const { Billing, GEN_COST, CACHE_COST, FREE_BONUS, DAILY_FREE, FREE_MODE, REFERRAL_BONUS } = require('./billing.js');
 
 const PORT = Number(process.env.SWARM_PORT || 3333);
 const HOST = process.env.SWARM_HOST || '127.0.0.1';
@@ -178,9 +178,11 @@ async function main() {
       res.json({
         ...base,
         demo: false,
-        cost: r.cached ? CACHE_COST : GEN_COST,
+        free: FREE_MODE,
+        cost: FREE_MODE ? 0 : (r.cached ? CACHE_COST : GEN_COST),
         balance_after: charge.balance,
         ref_code: user.ref_code || null,
+        donate: FREE_MODE ? process.env.DONATE_URL || null : null,
       });
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -236,12 +238,15 @@ async function main() {
       credits: billing.getBalance(req.user.id),
       gen_cost: GEN_COST,
       cache_cost: CACHE_COST,
+      free_mode: FREE_MODE,
+      donate: FREE_MODE ? process.env.DONATE_URL || null : null,
       agent_balance_sats: keeper.balance(agent),
     });
   });
 
   app.get('/pricing', (req, res) => {
     res.json({
+      free_mode: FREE_MODE,
       gen_cost: GEN_COST,
       cache_cost: CACHE_COST,
       free_bonus: FREE_BONUS,
@@ -249,6 +254,8 @@ async function main() {
       referral_bonus: REFERRAL_BONUS,
       demo_free_questions: Number(process.env.DEMO_DAILY || 3),
       unit: 'credits',
+      donate: FREE_MODE ? process.env.DONATE_URL || null : null,
+      message: FREE_MODE ? 'Полностью бесплатно. Поддержи проект донатом — это покрывает сервер и LLM-расходы' : 'Кредитная модель',
     });
   });
 

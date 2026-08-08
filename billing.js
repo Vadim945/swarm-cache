@@ -19,6 +19,7 @@ const Database = require('better-sqlite3');
 const DB_PATH = path.join(__dirname, 'data', 'users.db');
 const GEN_COST = Number(process.env.GEN_COST || 1.0);      // единиц за генерацию
 const CACHE_COST = Number(process.env.CACHE_COST || 0.1);  // единиц за кэш-хит
+const FREE_MODE = process.env.FREE_MODE !== 'false';       // бесплатный режим: списание выключено (донаты вместо оплаты)
 const MIN_COST = Math.min(GEN_COST, CACHE_COST);
 const FREE_BONUS = Number(process.env.FREE_BONUS || 10.0); // стартовый бонус бета-ключам
 const DAILY_FREE = Number(process.env.DAILY_FREE || 20.0);  // ежедневный бесплатный пул (монетизация потом)
@@ -109,6 +110,9 @@ class Billing {
 
   /** Списывает по факту: cached → CACHE_COST, иначе GEN_COST. При нехватке — добирает из daily pool. */
   charge(userId, cached) {
+    if (FREE_MODE) {
+      return { ok: true, balance: this.getBalance(userId), free: true };
+    }
     const need = cached ? CACHE_COST : GEN_COST;
     let r = this.debit(userId, need, cached ? 'cache hit' : 'llm generation');
     if (!r.ok && this.dailyTopup(userId)) {
@@ -208,4 +212,4 @@ if (process.argv[1] && process.argv[1].endsWith('billing.js')) {
   }
 }
 
-module.exports = { Billing, GEN_COST, CACHE_COST, MIN_COST, FREE_BONUS, DAILY_FREE, REFERRAL_BONUS };
+module.exports = { Billing, GEN_COST, CACHE_COST, MIN_COST, FREE_BONUS, DAILY_FREE, FREE_MODE, REFERRAL_BONUS };

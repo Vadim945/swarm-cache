@@ -92,7 +92,9 @@ async function cmdBalance() {
   const data = await api('GET', '/balance', { key: cfg.key });
   console.log(`Баланс: ${data.credits} кредитов`);
   console.log(`Генерация: ${data.gen_cost} | Кэш-хит: ${data.cache_cost}`);
+  if (data.free_mode) console.log('💚 Режим: полностью бесплатно, без лимитов');
   if (data.share_link) console.log(`Реферальная ссылка: ${data.share_link}`);
+  if (data.donate) console.log(`💚 Поддержать проект: ${data.donate}`);
   return data;
 }
 
