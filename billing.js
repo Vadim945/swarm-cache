@@ -21,6 +21,7 @@ const GEN_COST = Number(process.env.GEN_COST || 1.0);      // единиц за 
 const CACHE_COST = Number(process.env.CACHE_COST || 0.1);  // единиц за кэш-хит
 const MIN_COST = Math.min(GEN_COST, CACHE_COST);
 const FREE_BONUS = Number(process.env.FREE_BONUS || 10.0); // стартовый бонус бета-ключам
+const DAILY_FREE = Number(process.env.DAILY_FREE || 20.0);  // ежедневный бесплатный пул (монетизация потом)
 const REFERRAL_BONUS = Number(process.env.REFERRAL_BONUS || 2.0);        // бонус за приглашение (обоим)
 const REFERRAL_MAX_PER_DAY = Number(process.env.REFERRAL_MAX_PER_DAY || 5); // лимит начислений рефереру/сутки
 
@@ -54,6 +55,10 @@ class Billing {
         used_by INTEGER,
         used_at INTEGER,
         created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS user_daily (
+        user_id INTEGER PRIMARY KEY,
+        last_topup TEXT NOT NULL DEFAULT ''
       );
     `);
   }
@@ -89,9 +94,27 @@ class Billing {
     return { ok: true, balance: this.getBalance(userId) };
   }
 
-  /** Списывает по факту: cached → CACHE_COST, иначе GEN_COST. */
+  /** Ежедневный бесплатный пул: начисляет DAILY_FREE, если сегодня ещё не начислял. */
+  dailyTopup(userId) {
+    const today = new Date().toISOString().slice(0, 10);
+    const r = this.db.prepare('SELECT last_topup FROM user_daily WHERE user_id = ?').get(userId);
+    if (r && r.last_topup === today) return false;
+    this.credit(userId, DAILY_FREE, 'daily free pool');
+    this.db.prepare(`
+      INSERT INTO user_daily (user_id, last_topup) VALUES (?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET last_topup = excluded.last_topup
+    `).run(userId, today);
+    return true;
+  }
+
+  /** Списывает по факту: cached → CACHE_COST, иначе GEN_COST. При нехватке — добирает из daily pool. */
   charge(userId, cached) {
-    return this.debit(userId, cached ? CACHE_COST : GEN_COST, cached ? 'cache hit' : 'llm generation');
+    const need = cached ? CACHE_COST : GEN_COST;
+    let r = this.debit(userId, need, cached ? 'cache hit' : 'llm generation');
+    if (!r.ok && this.dailyTopup(userId)) {
+      r = this.debit(userId, need, cached ? 'cache hit' : 'llm generation');
+    }
+    return r;
   }
 
   /**
@@ -185,4 +208,4 @@ if (process.argv[1] && process.argv[1].endsWith('billing.js')) {
   }
 }
 
-module.exports = { Billing, GEN_COST, CACHE_COST, MIN_COST, FREE_BONUS, REFERRAL_BONUS };
+module.exports = { Billing, GEN_COST, CACHE_COST, MIN_COST, FREE_BONUS, DAILY_FREE, REFERRAL_BONUS };

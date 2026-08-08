@@ -14,7 +14,7 @@ const fs = require('fs');
 const express = require('express');
 const { CacheKeeper, LOCAL_AGENT } = require('./skills/cache-keeper/handler.js');
 const { UserAuth } = require('./auth.js');
-const { Billing, GEN_COST, CACHE_COST, FREE_BONUS, REFERRAL_BONUS } = require('./billing.js');
+const { Billing, GEN_COST, CACHE_COST, FREE_BONUS, DAILY_FREE, REFERRAL_BONUS } = require('./billing.js');
 
 const PORT = Number(process.env.SWARM_PORT || 3333);
 const HOST = process.env.SWARM_HOST || '127.0.0.1';
@@ -146,13 +146,8 @@ async function main() {
       demo = true;
     }
 
-    // 2) проверка баланса (только для зарегистрированных)
-    if (!demo) {
-      const bal = billing.getBalance(user.id);
-      if (bal < CACHE_COST) {
-        return res.status(402).json({ error: 'insufficient balance', balance: bal, minCost: CACHE_COST });
-      }
-    }
+    // 2) баланс не блокирует: при нехватке charge() сам доберёт из daily free pool
+    //    (жёсткая проверка убрана — см. billing.charge + dailyTopup)
 
     try {
       const r = await keeper.ask(question);
@@ -173,7 +168,12 @@ async function main() {
       }
       const charge = billing.charge(user.id, !!r.cached);
       if (!charge.ok) {
-        return res.status(402).json({ error: charge.reason, balance: charge.balance, need: charge.need });
+        return res.status(402).json({
+          error: 'daily free pool exhausted — ' + charge.reason + '. Пополни баланс (промо-код) или возвращайся завтра',
+          balance: charge.balance,
+          need: charge.need,
+          daily_free: DAILY_FREE,
+        });
       }
       res.json({
         ...base,
@@ -245,6 +245,7 @@ async function main() {
       gen_cost: GEN_COST,
       cache_cost: CACHE_COST,
       free_bonus: FREE_BONUS,
+      daily_free: DAILY_FREE,
       referral_bonus: REFERRAL_BONUS,
       demo_free_questions: Number(process.env.DEMO_DAILY || 3),
       unit: 'credits',
