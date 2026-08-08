@@ -48,6 +48,13 @@ class Billing {
         bonus REAL NOT NULL,
         ts INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS redeem_codes (
+        code TEXT PRIMARY KEY,
+        credits REAL NOT NULL,
+        used_by INTEGER,
+        used_at INTEGER,
+        created_at INTEGER NOT NULL
+      );
     `);
   }
 
@@ -120,6 +127,61 @@ class Billing {
 
   log(userId, limit = 15) {
     return this.db.prepare('SELECT * FROM user_billing_log WHERE user_id = ? ORDER BY id DESC LIMIT ?').all(userId, limit);
+  }
+
+  /* ---- промо-коды пополнения (монетизация) ---- */
+
+  createRedeemCode(credits, count = 1) {
+    const crypto = require('crypto');
+    const codes = [];
+    const stmt = this.db.prepare('INSERT OR IGNORE INTO redeem_codes (code, credits, used_by, used_at, created_at) VALUES (?,?,NULL,NULL,?)');
+    for (let i = 0; i < count; i++) {
+      const code = 'SW-' + crypto.randomBytes(4).toString('hex').toUpperCase();
+      stmt.run(code, credits, Date.now());
+      codes.push(code);
+    }
+    return codes;
+  }
+
+  redeemCode(userId, code) {
+    const c = this.db.prepare('SELECT * FROM redeem_codes WHERE code = ?').get(String(code).trim().toUpperCase());
+    if (!c) return { ok: false, reason: 'invalid code' };
+    if (c.used_by) return { ok: false, reason: 'code already used' };
+    this.credit(userId, c.credits, 'redeem code ' + c.code);
+    this.db.prepare('UPDATE redeem_codes SET used_by = ?, used_at = ? WHERE code = ?').run(userId, Date.now(), c.code);
+    return { ok: true, credits: c.credits, balance: this.getBalance(userId) };
+  }
+
+  redeemStats() {
+    return this.db.prepare(`
+      SELECT COUNT(*) total, COALESCE(SUM(CASE WHEN used_by IS NOT NULL THEN credits END), 0) used_credits,
+             COUNT(used_by) used_count FROM redeem_codes
+    `).get();
+  }
+}
+
+/* ---- CLI ---- */
+if (process.argv[1] && process.argv[1].endsWith('billing.js')) {
+  const [,, cmd, a, b] = process.argv;
+  const billing = new Billing();
+  switch (cmd) {
+    case 'credit':
+      billing.credit(Number(a), Number(b));
+      console.log('OK, balance:', billing.getBalance(Number(a)));
+      break;
+    case 'redeem-gen': {
+      const codes = billing.createRedeemCode(Number(a), Number(b || 1));
+      console.log(codes.join('\n'));
+      break;
+    }
+    case 'redeem-stats':
+      console.log(billing.redeemStats());
+      break;
+    case 'price':
+      console.log({ GEN_COST, CACHE_COST, FREE_BONUS, REFERRAL_BONUS });
+      break;
+    default:
+      console.log('Usage: billing.js credit <userId> <amount> | redeem-gen <credits> [count] | redeem-stats | price');
   }
 }
 

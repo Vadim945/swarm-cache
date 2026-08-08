@@ -103,6 +103,14 @@ async function cmdStats() {
   return data;
 }
 
+async function cmdRedeem(code) {
+  const cfg = loadConfig();
+  if (!cfg.key) throw new Error('Нет ключа. Сначала: node swarm.mjs register [имя]');
+  const data = await api('POST', '/redeem', { key: cfg.key, body: { code } });
+  console.log(`✅ Код активирован: +${data.credits} кредитов | balance=${data.balance}`);
+  return data;
+}
+
 const [, , cmd, ...args] = process.argv;
 const main = async () => {
   try {
@@ -115,9 +123,14 @@ const main = async () => {
         break;
       }
       case 'balance': await cmdBalance(); break;
+      case 'redeem': {
+        if (args.length < 1) throw new Error('Нужно: redeem <код>');
+        await cmdRedeem(args[0]);
+        break;
+      }
       case 'stats': await cmdStats(); break;
       default:
-        console.log('Swarm Cache клиент\n  register [имя] | ask "вопрос" | publish "вопрос" "ответ" | balance | stats');
+        console.log('Swarm Cache клиент\n  register [имя] | ask "вопрос" | publish "вопрос" "ответ" | balance | redeem <код> | stats');
     }
   } catch (e) {
     console.error('❌ ' + e.message);

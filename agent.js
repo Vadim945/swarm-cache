@@ -251,6 +251,27 @@ async function main() {
     });
   });
 
+  // --- Активация промо-кода пополнения (монетизация) ---
+  app.post('/redeem', requireKey, (req, res) => {
+    const user = auth.auth(req.headers['x-api-key']);
+    if (!user) return res.status(401).json({ error: 'invalid key' });
+    const code = req.body && typeof req.body.code === 'string' ? req.body.code.trim() : '';
+    if (!code) return res.status(400).json({ error: 'field "code" is required' });
+    const r = billing.redeemCode(user.id, code);
+    if (!r.ok) return res.status(400).json({ error: r.reason });
+    res.json(r);
+  });
+
+  // --- Админ: генерация промо-кодов (защищено ADMIN_TOKEN) ---
+  app.post('/admin/redeem-gen', (req, res) => {
+    const admin = process.env.ADMIN_TOKEN;
+    if (!admin || req.headers['x-admin-token'] !== admin) return res.status(403).json({ error: 'forbidden' });
+    const credits = Number(req.body && req.body.credits);
+    const count = Number((req.body && req.body.count) || 1);
+    if (!credits || credits <= 0 || count <= 0 || count > 100) return res.status(400).json({ error: 'credits>0, 1<=count<=100' });
+    res.json({ codes: billing.createRedeemCode(credits, count) });
+  });
+
   app.get('/stats', requireKey, (req, res) => {
     res.json(keeper.stats());
   });
