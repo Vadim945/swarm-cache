@@ -187,6 +187,45 @@ async function main() {
     }
   });
 
+  // --- Публикация ответа в рой (для OpenClaw-скилла и API-клиентов) ---
+  // Юзер присылает question + answer -> хаб эмбеддит вопрос, кладёт в общий кэш,
+  // публикует в P2P и начисляет автору награду (publish_reward).
+  const PUBLISH_REWARD = Number(process.env.PUBLISH_REWARD || 0.5);
+  app.post('/publish', async (req, res) => {
+    const key = req.headers['x-api-key'];
+    const user = key ? auth.auth(key) : null;
+    if (!user) return res.status(401).json({ error: 'invalid or missing X-API-Key' });
+    if (!auth.rateLimit(user.id)) {
+      return res.status(429).json({ error: 'rate limit exceeded (per minute)', retryAfterSec: 60 });
+    }
+    const question = req.body && typeof req.body.question === 'string' ? req.body.question.trim() : '';
+    const answer = req.body && typeof req.body.answer === 'string' ? req.body.answer.trim() : '';
+    if (!question || !answer) return res.status(400).json({ error: 'fields "question" and "answer" (strings) are required' });
+    if (question.length > 2000 || answer.length > 20000) {
+      return res.status(400).json({ error: 'question <= 2000 chars, answer <= 20000 chars' });
+    }
+    try {
+      const emb = await keeper.embed(question);
+      const qhash = keeper.hash(question);
+      const existing = keeper._db.prepare('SELECT id FROM cache WHERE qhash = ?').get(qhash);
+      if (!existing) {
+        keeper.addToCache(question, answer, emb, { source: 'published', agent: 'peer-' + user.id });
+      }
+      keeper.publishP2P(qhash, question, answer).catch(() => {});
+      const reward = existing ? 0 : PUBLISH_REWARD;
+      const balanceAfter = reward > 0 ? billing.credit(user.id, reward, 'publish reward') : billing.getBalance(user.id);
+      res.json({
+        ok: true,
+        stored: !existing,
+        duplicate: !!existing,
+        reward,
+        balance_after: balanceAfter,
+      });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get('/balance', requireKey, (req, res) => {
     const agent = (req.query.agent || LOCAL_AGENT).toString();
     res.json({
