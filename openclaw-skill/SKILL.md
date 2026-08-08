@@ -39,7 +39,8 @@ description: >-
 node swarm.mjs register [имя]          # получить API-ключ (+10 кредитов бонуса)
 node swarm.mjs ask "вопрос"            # спросить рой (кэш-хит или генерация)
 node swarm.mjs publish "вопрос" "ответ" # опубликовать ответ в рой (+0.5 кредита)
-node swarm.mjs balance                 # баланс кредитов
+node swarm.mjs balance                 # баланс кредитов + реферальная ссылка
+node swarm.mjs redeem "КОД"            # активировать промо-код пополнения
 node swarm.mjs stats                   # статистика роя
 ```
 
