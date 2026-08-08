@@ -1,27 +1,32 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * swarm.mjs — узел роя Swarm Cache для OpenClaw.
+ * swarm.mjs — узел роя Swarm Cache для OpenClaw. НЕУБИВАЕМЫЙ.
  *
- * Работает БЕЗ сервера: общая база ответов живёт в GitHub-репо
- * (https://github.com/Vadim945/swarm-cache-data) и масштабируется шардированием:
+ * Три контура, которые работают независимо и дополняют друг друга:
  *
- *   shards/YYYY-MM-DD.json   — ответы за день (публикация пишет только файл дня)
- *   full-YYYY-MM-DD.json     — полный снапшот для новых узлов (пересобирается Actions)
+ *   1. GITHUB (всегда доступен, открытый) — основная память роя:
+ *      репо Vadim945/swarm-cache-data, шарды по дням + полный снапшот.
+ *      Юзер ВСЕГДА публикует ответы сюда (бэкап + обновление БД в любом случае).
+ *   2. ХАБ (VPS, быстрый) — сопряжён с GitHub: ask через хаб быстрее,
+ *      у хаба своя SQLite-база + P2P. Если хаб жив — используем, если нет —
+ *      юзер работает с GitHub-базой напрямую.
+ *   3. ЛОКАЛЬНАЯ БАЗА + СВОЯ LLM — офлайн-фолбэк: даже без интернета
+ *      узел отвечает из своего кэша и генерирует своей LLM.
  *
- * Поиск — локально. Генерация новых ответов — через LLM-ключ пользователя
- * (хранится в конфиге). Сгенерированный ответ сразу возвращается рою.
+ * Если что-то одно ломается — всегда доступен альтернативный источник,
+ * и база пополняется в любом случае (GitHub не зависит от VPS).
  *
  * Все секреты — в ~/.swarm-cache/config.json (chmod 600):
- *   { name, key, llmUrl, llmKey, llmModel, githubToken }
+ *   { name, key, hub, hubKey, llmUrl, llmKey, llmModel, githubToken }
  * Настраиваются командой: node swarm.mjs config set <поле> <значение>
  *
  * Использование:
- *   node swarm.mjs register [имя]              — регистрация узла
- *   node swarm.mjs ask "вопрос"                — поиск в базе роя
- *   node swarm.mjs publish "вопрос" "ответ"    — добавить ответ в базу + push
+ *   node swarm.mjs register [имя]              — регистрация узла (+ ключ хаба)
+ *   node swarm.mjs ask "вопрос"                — поиск в рое (хаб → GitHub → своя LLM)
+ *   node swarm.mjs publish "вопрос" "ответ"    — добавить ответ (GitHub + хаб)
  *   node swarm.mjs sync                        — синхронизация с GitHub
- *   node swarm.mjs config set <поле> <знач>    — настройка (llmUrl/llmKey/llmModel/githubToken/name)
+ *   node swarm.mjs config set <поле> <знач>    — настройка (hub/llmUrl/llmKey/llmModel/githubToken/name)
  *   node swarm.mjs balance                     — статус узла
  *   node swarm.mjs stats                       — статистика базы
  */
@@ -37,6 +42,7 @@ const REPO = 'Vadim945/swarm-cache-data';
 const API_BASE = `https://api.github.com/repos/${REPO}/contents`;
 const RAW_BASE = `https://raw.githubusercontent.com/${REPO}/main`;
 const SHARDS_DIR = 'shards';
+const DEFAULT_HUB = 'https://swarm.telscan.ru';
 
 function loadConfig() {
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); }
@@ -86,7 +92,7 @@ function searchLocal(q) {
   return null;
 }
 
-/* ---- LLM-генерация через ключ из конфига ---- */
+/* ---- LLM-генерация через ключ из конфига (фолбэк) ---- */
 async function generate(q, cfg) {
   const url = cfg.llmUrl;
   const key = cfg.llmKey;
@@ -94,7 +100,7 @@ async function generate(q, cfg) {
   if (!url || !key) return null;
   const resp = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
+    headers: { 'Content-Type': 'application/json', Authorization: '***' + key },
     body: JSON.stringify({ model, messages: [{ role: 'user', content: q }], max_tokens: 800 }),
   });
   if (!resp.ok) throw new Error('LLM HTTP ' + resp.status);
@@ -102,7 +108,52 @@ async function generate(q, cfg) {
   return d.choices?.[0]?.message?.content || null;
 }
 
-/* ---- GitHub: helpers ---- */
+/* ---- ХАБ: быстрые запросы (сопряжён с GitHub) ---- */
+async function hubAsk(q, cfg) {
+  if (!cfg.hubKey) return { answer: null, reason: 'no-hub-key' };
+  const hub = cfg.hub || DEFAULT_HUB;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const resp = await fetch(hub + '/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': cfg.hubKey, 'User-Agent': 'swarm-cache-node' },
+      body: JSON.stringify({ question: q }),
+      signal: controller.signal,
+    });
+    if (resp.status === 401 || resp.status === 403) return { answer: null, reason: 'hub-key-rejected' };
+    if (!resp.ok) return { answer: null, reason: 'hub-http-' + resp.status };
+    const d = await resp.json();
+    return { answer: d.answer || null, hit: !!d.cached, reason: null };
+  } catch {
+    return { answer: null, reason: 'hub-down' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function hubPublish(q, a, cfg) {
+  if (!cfg.hubKey) return { ok: false, reason: 'no-hub-key' };
+  const hub = cfg.hub || DEFAULT_HUB;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const resp = await fetch(hub + '/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': cfg.hubKey, 'User-Agent': 'swarm-cache-node' },
+      body: JSON.stringify({ question: q, answer: a }),
+      signal: controller.signal,
+    });
+    if (!resp.ok) return { ok: false, reason: 'hub-http-' + resp.status };
+    const d = await resp.json();
+    return { ok: !!(d && (d.ok || d.stored || d.duplicate)), reason: null };
+  } catch {
+    return { ok: false, reason: 'hub-down' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* ---- GitHub: helpers (основное хранилище) ---- */
 function apiHeaders(cfg) {
   const h = { 'User-Agent': 'swarm-cache-node', 'Accept': 'application/vnd.github+json' };
   if (cfg.githubToken) h['Authorization'] = 'token ' + cfg.githubToken;
@@ -117,6 +168,15 @@ async function listDir(dir, cfg) {
   return d.map(f => f.name).filter(n => n.endsWith('.json'));
 }
 async function fetchRaw(file, cfg) {
+  // GitHub API (без CDN-кэша) — основной; raw — fallback
+  try {
+    const resp = await fetch(`${API_BASE}/${file}`, { headers: apiHeaders(cfg) });
+    if (resp.ok) {
+      const d = await resp.json();
+      const arr = JSON.parse(Buffer.from(d.content, 'base64').toString('utf8'));
+      if (Array.isArray(arr)) return arr;
+    }
+  } catch { /* fallback ниже */ }
   const resp = await fetch(`${RAW_BASE}/${file}?t=${Date.now()}`, { headers: { 'User-Agent': 'swarm-cache-node' } });
   if (!resp.ok) throw new Error('raw ' + file + ' HTTP ' + resp.status);
   const d = await resp.json();
@@ -135,7 +195,7 @@ async function putFile(file, content, sha, cfg) {
   if (sha) body.sha = sha;
   const resp = await fetch(`${API_BASE}/${file}`, {
     method: 'PUT',
-    headers: { 'Authorization': 'token ' + cfg.githubToken, 'Content-Type': 'application/json', 'User-Agent': 'swarm-cache-node' },
+    headers: { 'Authorization': '***' + cfg.githubToken, 'Content-Type': 'application/json', 'User-Agent': 'swarm-cache-node' },
     body: JSON.stringify(body),
   });
   if (!resp.ok) throw new Error('push ' + file + ' HTTP ' + resp.status + ' ' + await resp.text());
@@ -153,8 +213,7 @@ function merge(remote, local) {
   return out;
 }
 
-/* ---- синхронизация ---- */
-// Полная загрузка для нового узла: последний full-снапшот + шарды новее него
+/* ---- синхронизация с GitHub ---- */
 async function pullAll(cfg) {
   const root = await listDir('', cfg);
   const fulls = root.filter(n => /^full-\d{4}-\d{2}-\d{2}\.json$/.test(n)).sort();
@@ -173,7 +232,6 @@ async function pullAll(cfg) {
   for (const s of newShards) base = merge(base, await fetchRaw(SHARDS_DIR + '/' + s, cfg));
   return base;
 }
-// Инкрементальная загрузка: только шарды новее lastSync
 async function pullNew(cfg, local) {
   const from = cfg.lastSync || '2000-01-01';
   const shards = await listDir(SHARDS_DIR, cfg);
@@ -191,20 +249,19 @@ async function pullNew(cfg, local) {
   }
   return { db, added };
 }
-// Публикация одной записи в шард текущего дня (с ретраями на конфликт sha)
 async function pushRecord(record, cfg) {
   const day = todayStr();
   const file = `${SHARDS_DIR}/${day}.json`;
   for (let attempt = 0; attempt < 3; attempt++) {
     const existing = await fetchApiFile(file, cfg);
     const arr = existing ? existing.content : [];
-    if (arr.some(r => qhash(r.q) === qhash(record.q))) return true; // уже там
+    if (arr.some(r => qhash(r.q) === qhash(record.q))) return true;
     arr.push(record);
     try {
       await putFile(file, JSON.stringify(arr), existing?.sha, cfg);
       return true;
     } catch (e) {
-      if (attempt === 2) throw e; // конфликт sha — перечитываем и пробуем снова
+      if (attempt === 2) throw e;
     }
   }
   return false;
@@ -217,65 +274,107 @@ async function cmdRegister(name, cfg) {
   cfg.key = cfg.key || 'node-' + crypto.randomBytes(8).toString('hex');
   cfg.created = cfg.created || Date.now();
   saveConfig(cfg);
+  console.log(`✅ Узел зарегистрирован: ${finalName}`);
+  // пробуем получить ключ хаба (если нет)
+  if (!cfg.hubKey) {
+    const hub = cfg.hub || DEFAULT_HUB;
+    try {
+      const resp = await fetch(hub + '/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'User-Agent': 'swarm-cache-node' },
+        body: JSON.stringify({ name: finalName }),
+      });
+      if (resp.ok) {
+        const d = await resp.json();
+        if (d && d.key) {
+          cfg.hubKey = d.key;
+          saveConfig(cfg);
+          console.log(`   Ключ хаба получен (бонус ${d.bonus || 0} кредитов)`);
+        }
+      } else {
+        console.log(`   ⚠ хаб не выдал ключ (${resp.status}) — работаем через GitHub`);
+      }
+    } catch {
+      console.log('   ⚠ хаб недоступен — работаем через GitHub (рой не зависит от VPS)');
+    }
+  }
+  // тянем базу с GitHub (основное хранилище)
   try {
     const db = await pullAll(cfg);
     saveDb(db);
     cfg.lastSync = todayStr();
     saveConfig(cfg);
-    console.log(`✅ Узел зарегистрирован: ${finalName}`);
-    console.log(`   База: ${db.length} ответов роя (полная синхронизация)`);
+    console.log(`   База: ${db.length} ответов роя (GitHub)`);
   } catch (e) {
-    console.log(`✅ Узел зарегистрирован: ${finalName}`);
-    console.log(`   ⚠ GitHub недоступен: ${e.message}. База: ${loadDb().length} локальных ответов`);
+    console.log(`   ⚠ GitHub недоступен: ${e.message}. База: ${loadDb().length} локальных`);
   }
   return cfg;
 }
 
 async function cmdAsk(q, cfg) {
+  // 1. Хаб (быстро) — если есть ключ
+  const hr = await hubAsk(q, cfg);
+  if (hr.answer) {
+    console.log(`[HUB ${hr.hit ? 'HIT' : 'GEN'}]`);
+    console.log('---');
+    console.log(hr.answer);
+    console.log('---');
+    return { answer: hr.answer, source: 'hub' };
+  }
+  if (!hr.reason || hr.reason !== 'no-hub-key') {
+    console.log('⚠ Хаб недоступен (' + hr.reason + ') — GitHub/локально');
+  }
+  // 2. Локальная база (синхронизирована с GitHub)
   const hit = searchLocal(q);
   if (hit) {
     console.log(`[CACHED ${hit.match}${hit.score ? ' ' + hit.score + '%' : ''}]`);
     console.log('---');
     console.log(hit.a);
-    return hit;
+    console.log('---');
+    return { answer: hit.a, source: 'local' };
   }
   console.log('[MISS] ответа в рое нет');
+  // 3. Своя LLM
   const ans = await generate(q, cfg).catch(e => { console.error('⚠ LLM: ' + e.message); return null; });
   if (ans) {
     console.log('---');
     console.log(ans);
     console.log('---');
-    // Авто-пополнение: сгенерированный ответ сразу уходит в рой
     await autoPublish(q, ans, cfg);
-  } else {
-    console.log('Рекомендация: ответьте своим обычным способом (скилл не блокирует работу).');
-    if (!cfg.llmUrl || !cfg.llmKey) {
-      console.log('Хотите, чтобы рой сам генерировал ответы? Настройте LLM: node swarm.mjs config set llmUrl/llmKey');
-    }
-    console.log('После ответа опубликуйте его в рой: node swarm.mjs publish "вопрос" "ответ" — так база растёт и другим станет быстрее.');
+    return { answer: ans, source: 'llm' };
   }
+  console.log('Рекомендация: ответьте своим обычным способом (скилл не блокирует работу).');
+  if (!cfg.llmUrl || !cfg.llmKey) {
+    console.log('Хотите, чтобы рой сам генерировал ответы? Настройте LLM: node swarm.mjs config set llmUrl/llmKey');
+  }
+  console.log('После ответа опубликуйте его в рой: node swarm.mjs publish "вопрос" "ответ" — так база растёт и другим станет быстрее.');
   return null;
 }
 
-/* Авто-пополнение: сохранить сгенерированный ответ в локальную базу и в шард дня */
+/* Неубиваемое пополнение: GitHub (всегда) → хаб (если есть) → локально */
 async function autoPublish(q, a, cfg) {
   const db = loadDb();
   const h = qhash(q);
-  if (db.some(r => qhash(r.q) === h)) return; // уже есть — не дублируем
+  if (db.some(r => qhash(r.q) === h)) return;
   const rec = { q, a, ts: Math.floor(Date.now() / 1000) };
   db.push(rec);
   saveDb(db);
   console.log(`✅ Ответ добавлен в базу роя (всего ${db.length})`);
+  // GitHub — приоритет (основное хранилище, бэкап, доступно всегда)
   if (cfg.githubToken) {
     try {
       await pushRecord(rec, cfg);
-      console.log('   Пуш в общий репо: OK — другие узлы скоро получат этот ответ');
+      console.log('   Пуш в GitHub-репо: OK — база обновлена для всех узлов');
     } catch (e) {
-      console.log(`   Пуш в общий репо: пропущен (${e.message})`);
+      console.log(`   ⚠ Пуш в GitHub: ${e.message}`);
     }
   } else {
     console.log('   (без githubToken ответ пока только у вас; настройте: config set githubToken)');
   }
+  // Хаб — дополнительно (если доступен)
+  const hp = await hubPublish(q, a, cfg);
+  if (hp.ok) console.log('   Пуш на хаб: OK');
+  else if (hp.reason && hp.reason !== 'no-hub-key') console.log(`   ⚠ хаб: ${hp.reason} (не критично)`);
 }
 
 async function cmdPublish(q, a, cfg) {
@@ -286,12 +385,19 @@ async function cmdPublish(q, a, cfg) {
   db.push(rec);
   saveDb(db);
   console.log(`✅ Добавлено в локальную базу (всего ${db.length})`);
-  try {
-    await pushRecord(rec, cfg);
-    console.log('   Пуш в общий репо: OK');
-  } catch (e) {
-    console.log(`   Пуш в общий репо: пропущен (${e.message})`);
+  if (cfg.githubToken) {
+    try {
+      await pushRecord(rec, cfg);
+      console.log('   Пуш в GitHub-репо: OK');
+    } catch (e) {
+      console.log(`   ⚠ Пуш в GitHub: ${e.message}`);
+    }
+  } else {
+    console.log('   (без githubToken — только локально; настройте: config set githubToken)');
   }
+  const hp = await hubPublish(q, a, cfg);
+  if (hp.ok) console.log('   Пуш на хаб: OK');
+  else if (hp.reason && hp.reason !== 'no-hub-key') console.log(`   ⚠ хаб: ${hp.reason} (не критично)`);
 }
 
 async function cmdSync(cfg) {
@@ -301,7 +407,7 @@ async function cmdSync(cfg) {
     saveDb(db);
     cfg.lastSync = todayStr();
     saveConfig(cfg);
-    console.log(`✅ Синхронизировано: +${added} новых, всего ${db.length}`);
+    console.log(`✅ Синхронизировано с GitHub: +${added} новых, всего ${db.length}`);
   } catch (e) {
     console.log(`⚠ pull: ${e.message}. Локальная база: ${local.length} ответов`);
   }
@@ -311,15 +417,15 @@ function cmdConfig(args, cfg) {
   if (args.length < 2) {
     console.log('Текущий конфиг (~/.swarm-cache/config.json):');
     const show = { ...cfg };
-    if (show.llmKey) show.llmKey = '***';
-    if (show.githubToken) show.githubToken = '***';
+    for (const k of ['llmKey', 'githubToken', 'hubKey']) if (show[k]) show[k] = '***';
     console.log(JSON.stringify(show, null, 2));
     console.log('\nУстановка: node swarm.mjs config set <поле> <значение>');
-    console.log('Поля: name, llmUrl, llmKey, llmModel, githubToken');
+    console.log('Поля: name, hub, llmUrl, llmKey, llmModel, githubToken');
+    console.log('  hub — адрес хаба (по умолч. https://swarm.telscan.ru)');
     return;
   }
   const [field, value] = args[0] === 'set' ? [args[1], args[2]] : [args[0], args[1]];
-  const allowed = ['name', 'llmUrl', 'llmKey', 'llmModel', 'githubToken'];
+  const allowed = ['name', 'hub', 'llmUrl', 'llmKey', 'llmModel', 'githubToken'];
   if (!allowed.includes(field)) { console.error('❌ Неизвестное поле: ' + field); process.exitCode = 1; return; }
   cfg[field] = value;
   saveConfig(cfg);
@@ -329,8 +435,9 @@ function cmdConfig(args, cfg) {
 async function cmdBalance(cfg) {
   const db = loadDb();
   console.log(`Узел: ${cfg.name || 'не зарегистрирован'} | key: ${cfg.key || '-'}`);
-  console.log(`Локальная база: ${db.length} ответов`);
-  console.log(`Режим: GitHub-рой (без сервера), шардирование по дням`);
+  console.log(`Локальная база: ${db.length} ответов (GitHub-фолбэк)`);
+  const hub = cfg.hub || DEFAULT_HUB;
+  console.log(`Хаб: ${cfg.hubKey ? 'подключён (' + hub + ')' : 'не подключён — работа через GitHub'}`);
   if (cfg.llmUrl && cfg.llmKey) console.log(`LLM: ${cfg.llmModel || 'default'} (ваш ключ)`);
   else console.log('LLM: не настроена (config set llmUrl/llmKey) — только поиск по базе');
   if (cfg.githubToken) console.log('GitHub push: включён (ответы возвращаются рою)');
@@ -360,7 +467,7 @@ const main = async () => {
       case 'balance': await cmdBalance(cfg); break;
       case 'stats': await cmdStats(); break;
       default:
-        console.log('Swarm Cache узел (без сервера)\n  register [имя] | ask "вопрос" | publish "вопрос" "ответ" | sync | config | balance | stats');
+        console.log('Swarm Cache узел (неубиваемый: хаб + GitHub + локально)\n  register [имя] | ask "вопрос" | publish "вопрос" "ответ" | sync | config | balance | stats');
     }
   } catch (e) {
     console.error('❌ ' + e.message);
