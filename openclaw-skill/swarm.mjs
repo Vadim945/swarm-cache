@@ -3,9 +3,14 @@
 /**
  * swarm.mjs — узел роя Swarm Cache для OpenClaw.
  *
- * Работает БЕЗ сервера: общая база ответов синхронизируется через GitHub
- * (https://github.com/Vadim945/swarm-cache-data), поиск — локально.
- * Генерация новых ответов — через LLM-ключ пользователя (хранится в конфиге).
+ * Работает БЕЗ сервера: общая база ответов живёт в GitHub-репо
+ * (https://github.com/Vadim945/swarm-cache-data) и масштабируется шардированием:
+ *
+ *   shards/YYYY-MM-DD.json   — ответы за день (публикация пишет только файл дня)
+ *   full-YYYY-MM-DD.json     — полный снапшот для новых узлов (пересобирается Actions)
+ *
+ * Поиск — локально. Генерация новых ответов — через LLM-ключ пользователя
+ * (хранится в конфиге). Сгенерированный ответ сразу возвращается рою.
  *
  * Все секреты — в ~/.swarm-cache/config.json (chmod 600):
  *   { name, key, llmUrl, llmKey, llmModel, githubToken }
@@ -28,9 +33,10 @@ import crypto from 'crypto';
 const CONFIG_DIR = path.join(os.homedir(), '.swarm-cache');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 const DB_PATH = path.join(CONFIG_DIR, 'cache.json');
-const GITHUB_RAW = 'https://raw.githubusercontent.com/Vadim945/swarm-cache-data/main/cache.json';
-const GITHUB_RAW_BUST = 'https://raw.githubusercontent.com/Vadim945/swarm-cache-data/main/cache.json?t='; // cache-busting
-const GITHUB_API = 'https://api.github.com/repos/Vadim945/swarm-cache-data/contents/cache.json';
+const REPO = 'Vadim945/swarm-cache-data';
+const API_BASE = `https://api.github.com/repos/${REPO}/contents`;
+const RAW_BASE = `https://raw.githubusercontent.com/${REPO}/main`;
+const SHARDS_DIR = 'shards';
 
 function loadConfig() {
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); }
@@ -49,6 +55,7 @@ function saveDb(db) {
   fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 0));
 }
 const qhash = (q) => crypto.createHash('sha256').update(q.toLowerCase().replace(/\s+/g, ' ').trim()).digest('hex');
+const todayStr = () => new Date().toISOString().slice(0, 10);
 
 /* ---- семантический поиск: локальный, лёгкий ---- */
 const STOP = new Set(['что', 'как', 'это', 'такое', 'для', 'при', 'зачем', 'почему', 'какие', 'какой', 'какая', 'можно', 'нужно', 'помоги', 'расскажи', 'объясни', 'работает', 'использовать', 'используется', 'используют', 'между', 'через', 'когда', 'который', 'которая', 'которые', 'свои', 'своего', 'есть', 'всего', 'основные', 'основной', 'разница', 'отличие', 'лучше', 'какой', 'про', 'без', 'над', 'под', 'или', 'либо', 'все', 'всё', 'очень', 'более']);
@@ -95,45 +102,44 @@ async function generate(q, cfg) {
   return d.choices?.[0]?.message?.content || null;
 }
 
-/* ---- GitHub sync ---- */
-async function pullFromGitHub(cfg) {
-  const token = cfg.githubToken;
-  try {
-    const headers = { 'User-Agent': 'swarm-cache-node', 'Accept': 'application/vnd.github+json' };
-    if (token) headers['Authorization'] = 'token ' + token;
-    const resp = await fetch(GITHUB_API, { headers });
-    if (resp.ok) {
-      const d = await resp.json();
-      const remote = JSON.parse(Buffer.from(d.content, 'base64').toString('utf8'));
-      if (Array.isArray(remote)) return remote;
-    }
-  } catch { /* fallback ниже */ }
-  const resp = await fetch(GITHUB_RAW_BUST + Date.now(), { headers: { 'User-Agent': 'swarm-cache-node' } });
-  if (!resp.ok) throw new Error('GitHub pull HTTP ' + resp.status);
-  const remote = await resp.json();
-  if (!Array.isArray(remote)) throw new Error('bad remote format');
-  return remote;
+/* ---- GitHub: helpers ---- */
+function apiHeaders(cfg) {
+  const h = { 'User-Agent': 'swarm-cache-node', 'Accept': 'application/vnd.github+json' };
+  if (cfg.githubToken) h['Authorization'] = 'token ' + cfg.githubToken;
+  return h;
 }
-async function pushToGitHub(db, cfg) {
-  const token = cfg.githubToken;
-  if (!token) throw new Error('githubToken не задан — push пропущен (config set githubToken <токен>)');
-  const body = JSON.stringify(db);
-  const sha = await getRemoteSha(cfg);
-  const resp = await fetch(GITHUB_API, {
-    method: 'PUT',
-    headers: { 'Authorization': 'token ' + token, 'Content-Type': 'application/json', 'User-Agent': 'swarm-cache-node' },
-    body: JSON.stringify({ message: 'sync from node', content: Buffer.from(body).toString('base64'), sha: sha || undefined }),
-  });
-  if (!resp.ok) throw new Error('GitHub push HTTP ' + resp.status + ' ' + await resp.text());
-  return true;
-}
-async function getRemoteSha(cfg) {
-  const token = cfg.githubToken;
-  if (!token) return null;
-  const resp = await fetch(GITHUB_API, { headers: { 'Authorization': 'token ' + token, 'User-Agent': 'swarm-cache-node' } });
-  if (!resp.ok) return null;
+async function listDir(dir, cfg) {
+  const url = dir ? `${API_BASE}/${dir}` : API_BASE;
+  const resp = await fetch(url, { headers: apiHeaders(cfg) });
+  if (!resp.ok) throw new Error('list ' + dir + ' HTTP ' + resp.status);
   const d = await resp.json();
-  return d.sha || null;
+  if (!Array.isArray(d)) throw new Error('bad listing');
+  return d.map(f => f.name).filter(n => n.endsWith('.json'));
+}
+async function fetchRaw(file, cfg) {
+  const resp = await fetch(`${RAW_BASE}/${file}?t=${Date.now()}`, { headers: { 'User-Agent': 'swarm-cache-node' } });
+  if (!resp.ok) throw new Error('raw ' + file + ' HTTP ' + resp.status);
+  const d = await resp.json();
+  if (!Array.isArray(d)) throw new Error('bad format ' + file);
+  return d;
+}
+async function fetchApiFile(file, cfg) {
+  const resp = await fetch(`${API_BASE}/${file}`, { headers: apiHeaders(cfg) });
+  if (resp.status === 404) return null;
+  if (!resp.ok) throw new Error('api ' + file + ' HTTP ' + resp.status);
+  const d = await resp.json();
+  return { sha: d.sha, content: JSON.parse(Buffer.from(d.content, 'base64').toString('utf8')) };
+}
+async function putFile(file, content, sha, cfg) {
+  const body = { message: 'sync from node', content: Buffer.from(content).toString('base64') };
+  if (sha) body.sha = sha;
+  const resp = await fetch(`${API_BASE}/${file}`, {
+    method: 'PUT',
+    headers: { 'Authorization': 'token ' + cfg.githubToken, 'Content-Type': 'application/json', 'User-Agent': 'swarm-cache-node' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) throw new Error('push ' + file + ' HTTP ' + resp.status + ' ' + await resp.text());
+  return true;
 }
 
 /* ---- merge баз ---- */
@@ -147,6 +153,63 @@ function merge(remote, local) {
   return out;
 }
 
+/* ---- синхронизация ---- */
+// Полная загрузка для нового узла: последний full-снапшот + шарды новее него
+async function pullAll(cfg) {
+  const root = await listDir('', cfg);
+  const fulls = root.filter(n => /^full-\d{4}-\d{2}-\d{2}\.json$/.test(n)).sort();
+  let base = [];
+  let from = '2000-01-01';
+  if (fulls.length) {
+    const latest = fulls[fulls.length - 1];
+    from = latest.match(/\d{4}-\d{2}-\d{2}/)[0];
+    base = await fetchRaw(latest, cfg);
+  }
+  const shards = await listDir(SHARDS_DIR, cfg);
+  const newShards = shards.filter(n => {
+    const d = n.match(/^(\d{4}-\d{2}-\d{2})\.json$/);
+    return d && d[1] >= from;
+  });
+  for (const s of newShards) base = merge(base, await fetchRaw(SHARDS_DIR + '/' + s, cfg));
+  return base;
+}
+// Инкрементальная загрузка: только шарды новее lastSync
+async function pullNew(cfg, local) {
+  const from = cfg.lastSync || '2000-01-01';
+  const shards = await listDir(SHARDS_DIR, cfg);
+  const newShards = shards.filter(n => {
+    const d = n.match(/^(\d{4}-\d{2}-\d{2})\.json$/);
+    return d && d[1] > from;
+  });
+  let db = local;
+  let added = 0;
+  for (const s of newShards) {
+    const arr = await fetchRaw(SHARDS_DIR + '/' + s, cfg);
+    const before = db.length;
+    db = merge(db, arr);
+    added += db.length - before;
+  }
+  return { db, added };
+}
+// Публикация одной записи в шард текущего дня (с ретраями на конфликт sha)
+async function pushRecord(record, cfg) {
+  const day = todayStr();
+  const file = `${SHARDS_DIR}/${day}.json`;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const existing = await fetchApiFile(file, cfg);
+    const arr = existing ? existing.content : [];
+    if (arr.some(r => qhash(r.q) === qhash(record.q))) return true; // уже там
+    arr.push(record);
+    try {
+      await putFile(file, JSON.stringify(arr), existing?.sha, cfg);
+      return true;
+    } catch (e) {
+      if (attempt === 2) throw e; // конфликт sha — перечитываем и пробуем снова
+    }
+  }
+  return false;
+}
+
 /* ---- команды ---- */
 async function cmdRegister(name, cfg) {
   const finalName = name || cfg.name || os.userInfo().username || 'openclaw-user';
@@ -155,11 +218,12 @@ async function cmdRegister(name, cfg) {
   cfg.created = cfg.created || Date.now();
   saveConfig(cfg);
   try {
-    const remote = await pullFromGitHub(cfg);
-    const db = merge(remote, loadDb());
+    const db = await pullAll(cfg);
     saveDb(db);
+    cfg.lastSync = todayStr();
+    saveConfig(cfg);
     console.log(`✅ Узел зарегистрирован: ${finalName}`);
-    console.log(`   База: ${db.length} ответов роя (синхронизировано с GitHub)`);
+    console.log(`   База: ${db.length} ответов роя (полная синхронизация)`);
   } catch (e) {
     console.log(`✅ Узел зарегистрирован: ${finalName}`);
     console.log(`   ⚠ GitHub недоступен: ${e.message}. База: ${loadDb().length} локальных ответов`);
@@ -181,7 +245,7 @@ async function cmdAsk(q, cfg) {
     console.log('---');
     console.log(ans);
     console.log('---');
-    // Авто-пополнение роя: сгенерированный ответ сразу сохраняем в базу и пушим в GitHub
+    // Авто-пополнение: сгенерированный ответ сразу уходит в рой
     await autoPublish(q, ans, cfg);
   } else {
     console.log('Рекомендация: ответьте своим обычным способом (скилл не блокирует работу).');
@@ -193,17 +257,18 @@ async function cmdAsk(q, cfg) {
   return null;
 }
 
-/* Авто-пополнение: сохранить сгенерированный ответ в локальную базу и (если есть токен) в GitHub */
+/* Авто-пополнение: сохранить сгенерированный ответ в локальную базу и в шард дня */
 async function autoPublish(q, a, cfg) {
   const db = loadDb();
   const h = qhash(q);
   if (db.some(r => qhash(r.q) === h)) return; // уже есть — не дублируем
-  db.push({ q, a, ts: Math.floor(Date.now() / 1000) });
+  const rec = { q, a, ts: Math.floor(Date.now() / 1000) };
+  db.push(rec);
   saveDb(db);
   console.log(`✅ Ответ добавлен в базу роя (всего ${db.length})`);
   if (cfg.githubToken) {
     try {
-      await pushToGitHub(db, cfg);
+      await pushRecord(rec, cfg);
       console.log('   Пуш в общий репо: OK — другие узлы скоро получат этот ответ');
     } catch (e) {
       console.log(`   Пуш в общий репо: пропущен (${e.message})`);
@@ -217,11 +282,12 @@ async function cmdPublish(q, a, cfg) {
   const db = loadDb();
   const h = qhash(q);
   if (db.some(r => qhash(r.q) === h)) { console.log('⏭ Дубль — уже есть в базе'); return; }
-  db.push({ q, a, ts: Math.floor(Date.now() / 1000) });
+  const rec = { q, a, ts: Math.floor(Date.now() / 1000) };
+  db.push(rec);
   saveDb(db);
   console.log(`✅ Добавлено в локальную базу (всего ${db.length})`);
   try {
-    await pushToGitHub(db, cfg);
+    await pushRecord(rec, cfg);
     console.log('   Пуш в общий репо: OK');
   } catch (e) {
     console.log(`   Пуш в общий репо: пропущен (${e.message})`);
@@ -230,17 +296,14 @@ async function cmdPublish(q, a, cfg) {
 
 async function cmdSync(cfg) {
   const local = loadDb();
-  const remote = await pullFromGitHub(cfg).catch(e => { console.error('⚠ pull: ' + e.message); return null; });
-  if (remote) {
-    const merged = merge(remote, local);
-    saveDb(merged);
-    console.log(`✅ Синхронизировано: ${merged.length} ответов (было локально ${local.length})`);
-    if (merged.length > remote.length) {
-      try { await pushToGitHub(merged, cfg); console.log('   Новые ответы вернулись в общий репо'); }
-      catch (e) { console.log('   ⚠ push: ' + e.message); }
-    }
-  } else {
-    console.log(`Локальная база: ${local.length} ответов (GitHub недоступен)`);
+  try {
+    const { db, added } = await pullNew(cfg, local);
+    saveDb(db);
+    cfg.lastSync = todayStr();
+    saveConfig(cfg);
+    console.log(`✅ Синхронизировано: +${added} новых, всего ${db.length}`);
+  } catch (e) {
+    console.log(`⚠ pull: ${e.message}. Локальная база: ${local.length} ответов`);
   }
 }
 
@@ -267,7 +330,7 @@ async function cmdBalance(cfg) {
   const db = loadDb();
   console.log(`Узел: ${cfg.name || 'не зарегистрирован'} | key: ${cfg.key || '-'}`);
   console.log(`Локальная база: ${db.length} ответов`);
-  console.log(`Режим: GitHub-рой (без сервера)`);
+  console.log(`Режим: GitHub-рой (без сервера), шардирование по дням`);
   if (cfg.llmUrl && cfg.llmKey) console.log(`LLM: ${cfg.llmModel || 'default'} (ваш ключ)`);
   else console.log('LLM: не настроена (config set llmUrl/llmKey) — только поиск по базе');
   if (cfg.githubToken) console.log('GitHub push: включён (ответы возвращаются рою)');
