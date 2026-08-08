@@ -100,7 +100,7 @@ async function generate(q, cfg) {
   if (!url || !key) return null;
   const resp = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: '***' + key },
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
     body: JSON.stringify({ model, messages: [{ role: 'user', content: q }], max_tokens: 800 }),
   });
   if (!resp.ok) throw new Error('LLM HTTP ' + resp.status);
@@ -195,7 +195,7 @@ async function putFile(file, content, sha, cfg) {
   if (sha) body.sha = sha;
   const resp = await fetch(`${API_BASE}/${file}`, {
     method: 'PUT',
-    headers: { 'Authorization': '***' + cfg.githubToken, 'Content-Type': 'application/json', 'User-Agent': 'swarm-cache-node' },
+    headers: { 'Authorization': 'token ' + cfg.githubToken, 'Content-Type': 'application/json', 'User-Agent': 'swarm-cache-node' },
     body: JSON.stringify(body),
   });
   if (!resp.ok) throw new Error('push ' + file + ' HTTP ' + resp.status + ' ' + await resp.text());
