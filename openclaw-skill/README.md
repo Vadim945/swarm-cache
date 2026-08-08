@@ -9,25 +9,31 @@
 > Каждый установивший скилл = новый узел роя. Чем больше узлов — тем больше
 > ответов в общей базе и тем чаще кэш-хиты для всех.
 
-## 🚀 Установка за 30 секунд
+## 🚀 Установка одной командой
+
+Скорми своему OpenClaw:
 
 ```bash
-# 1. Скопируй в свой workspace
-cp -r swarm-cache ~/.openclaw/workspace/skills/
+openclaw skills install git:Vadim945/openclaw-swarm-cache
+```
 
-# 2. Зарегистрируйся — узел скачает базу роя с GitHub
+Или просто скажи своему агенту: *«установи скилл по ссылке
+https://github.com/Vadim945/openclaw-swarm-cache»* — он сделает сам.
+
+Затем зарегистрируй узел (скачает базу роя):
+
+```bash
 node ~/.openclaw/workspace/skills/swarm-cache/swarm.mjs register "Твоё имя"
 ```
 
-Всё. Скилл подхватится автоматически (workspace/skills автосканируется OpenClaw).
-Никаких npm-зависимостей — только встроенный `fetch` (Node 18+).
+Всё. Никаких npm-зависимостей — только встроенный `fetch` (Node 18+).
 
 ## 🎯 Как это работает
 
 | Шаг | Действие | Результат |
 |---|---|---|
 | 1 | `swarm ask "вопрос"` | Кэш-хит: ответ из базы роя, 0 токенов |
-| 2 | Промах → своя LLM | Генерация через твой ключ (`LLM_API_URL`) |
+| 2 | Промах → своя LLM | Генерация через твой ключ (config set llmKey) |
 | 3 | `swarm publish "вопрос" "ответ"` | Ответ возвращается рою (GitHub) |
 
 **Семантика, не строки:** «расскажи про dropout» и «что такое dropout» — один
@@ -50,16 +56,21 @@ node swarm.mjs register [имя]            # регистрация + синх�
 node swarm.mjs ask "вопрос"              # поиск в базе роя
 node swarm.mjs publish "вопрос" "ответ"  # вклад в рой (+ push в GitHub)
 node swarm.mjs sync                      # синхронизация с GitHub
+node swarm.mjs config set <поле> <знач>  # настройка (llmUrl/llmKey/llmModel/githubToken)
 node swarm.mjs balance                   # статус узла
 node swarm.mjs stats                     # статистика базы
 ```
 
-## ⚙️ Окружение (всё опционально)
+## ⚙️ Настройка (всё опционально)
 
-| Переменная | Зачем |
-|---|---|
-| `GITHUB_TOKEN` | Возвращать свои ответы рою (без неё — только чтение) |
-| `LLM_API_URL` + `LLM_API_KEY` + `LLM_MODEL` | Генерация новых ответов |
+```bash
+node swarm.mjs config set llmUrl "https://api.timeweb.ai/v1/chat/completions"
+node swarm.mjs config set llmKey "ваш-ключ"
+node swarm.mjs config set llmModel "deepseek/deepseek-v4-flash"
+node swarm.mjs config set githubToken "ваш-токен"   # возвращать ответы рою
+```
+
+Секреты лежат в `~/.swarm-cache/config.json` (права 600).
 
 ## 📦 Требования
 
@@ -70,8 +81,7 @@ node swarm.mjs stats                     # статистика базы
 ## 🌐 Ссылки
 
 - База роя: https://github.com/Vadim945/swarm-cache-data
-- Исходники: https://github.com/Vadim945/swarm-cache
-- Демо: https://swarm.telscan.ru
+- Исходники проекта: https://github.com/Vadim945/swarm-cache
 
 ---
 

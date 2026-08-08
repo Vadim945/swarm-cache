@@ -4,22 +4,21 @@
  * swarm.mjs — узел роя Swarm Cache для OpenClaw.
  *
  * Работает БЕЗ сервера: общая база ответов синхронизируется через GitHub
- * (https://github.com/Vadim945/swarm-cache-data), эмбеддинги и поиск — локально.
- * Генерация новых ответов — через LLM-ключ пользователя (env LLM_API_URL/LLM_API_KEY/LLM_MODEL).
+ * (https://github.com/Vadim945/swarm-cache-data), поиск — локально.
+ * Генерация новых ответов — через LLM-ключ пользователя (хранится в конфиге).
  *
- * Режимы:
- *   1) GitHub-синхронизация (по умолчанию) — узел тянет cache.json с GitHub,
- *      отвечает из базы, свои ответы возвращает в репо (если настроен GITHUB_TOKEN).
- *   2) Хаб (опция SWARM_HUB) — если хаб доступен, узел дополнительно
- *      синхронизируется с ним (онлайн-обмен с другими узлами).
+ * Все секреты — в ~/.swarm-cache/config.json (chmod 600):
+ *   { name, key, llmUrl, llmKey, llmModel, githubToken }
+ * Настраиваются командой: node swarm.mjs config set <поле> <значение>
  *
  * Использование:
- *   node swarm.mjs register [имя]             — локальная регистрация узла
- *   node swarm.mjs ask "вопрос"               — поиск в базе роя
- *   node swarm.mjs publish "вопрос" "ответ"   — добавить ответ в локальную базу
- *   node swarm.mjs sync                       — синхронизация с GitHub (pull+push)
- *   node swarm.mjs balance                    — статус узла
- *   node swarm.mjs stats                      — статистика базы
+ *   node swarm.mjs register [имя]              — регистрация узла
+ *   node swarm.mjs ask "вопрос"                — поиск в базе роя
+ *   node swarm.mjs publish "вопрос" "ответ"    — добавить ответ в базу + push
+ *   node swarm.mjs sync                        — синхронизация с GitHub
+ *   node swarm.mjs config set <поле> <знач>    — настройка (llmUrl/llmKey/llmModel/githubToken/name)
+ *   node swarm.mjs balance                     — статус узла
+ *   node swarm.mjs stats                       — статистика базы
  */
 import fs from 'fs';
 import os from 'os';
@@ -51,9 +50,8 @@ function saveDb(db) {
 }
 const qhash = (q) => crypto.createHash('sha256').update(q.toLowerCase().replace(/\s+/g, ' ').trim()).digest('hex');
 
-/* ---- семантический поиск: локальный, лёгкий (без тяжёлых моделей) ---- */
-// Ищем по: 1) точному qhash, 2) нормализованному совпадению, 3) общим словам.
-const STOP = new Set(['что', 'как', 'это', 'такое', 'для', 'при', 'зачем', 'почему', 'какие', 'какой', 'какая', 'можно', 'нужно', 'помоги', 'расскажи', 'объясни', 'работает', 'использовать', 'используется', 'используют', 'между', 'через', 'когда', 'который', 'которая', 'которые', 'свои', 'своего', 'есть', 'всего', 'основные', 'основной', 'разница', 'отличие', 'лучше', 'какой', 'про', 'для', 'при', 'без', 'над', 'под', 'или', 'либо', 'все', 'всё', 'очень', 'более']);
+/* ---- семантический поиск: локальный, лёгкий ---- */
+const STOP = new Set(['что', 'как', 'это', 'такое', 'для', 'при', 'зачем', 'почему', 'какие', 'какой', 'какая', 'можно', 'нужно', 'помоги', 'расскажи', 'объясни', 'работает', 'использовать', 'используется', 'используют', 'между', 'через', 'когда', 'который', 'которая', 'которые', 'свои', 'своего', 'есть', 'всего', 'основные', 'основной', 'разница', 'отличие', 'лучше', 'какой', 'про', 'без', 'над', 'под', 'или', 'либо', 'все', 'всё', 'очень', 'более']);
 
 function normalize(s) {
   return s.toLowerCase().replace(/[^a-zа-яё0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim();
@@ -70,9 +68,7 @@ function similarity(a, b) {
 function searchLocal(q) {
   const db = loadDb();
   const h = qhash(q);
-  // 1) точное совпадение
   for (const r of db) if (qhash(r.q) === h) return { ...r, match: 'exact' };
-  // 2) семантическое (по словам): минимум 2 общих значимых слова + порог
   let best = null, bestScore = 0;
   for (const r of db) {
     const s = similarity(q, r.q);
@@ -83,11 +79,11 @@ function searchLocal(q) {
   return null;
 }
 
-/* ---- LLM-генерация через ключ пользователя ---- */
-async function generate(q) {
-  const url = process.env.LLM_API_URL;
-  const key = process.env.LLM_API_KEY;
-  const model = process.env.LLM_MODEL || 'deepseek-v4-flash';
+/* ---- LLM-генерация через ключ из конфига ---- */
+async function generate(q, cfg) {
+  const url = cfg.llmUrl;
+  const key = cfg.llmKey;
+  const model = cfg.llmModel || 'deepseek-v4-flash';
   if (!url || !key) return null;
   const resp = await fetch(url, {
     method: 'POST',
@@ -100,9 +96,8 @@ async function generate(q) {
 }
 
 /* ---- GitHub sync ---- */
-async function pullFromGitHub() {
-  const token = process.env.GITHUB_TOKEN;
-  // Основной путь: GitHub API (актуальные данные, без CDN-кэша)
+async function pullFromGitHub(cfg) {
+  const token = cfg.githubToken;
   try {
     const headers = { 'User-Agent': 'swarm-cache-node', 'Accept': 'application/vnd.github+json' };
     if (token) headers['Authorization'] = 'token ' + token;
@@ -113,18 +108,17 @@ async function pullFromGitHub() {
       if (Array.isArray(remote)) return remote;
     }
   } catch { /* fallback ниже */ }
-  // Fallback: raw.githubusercontent (CDN, может быть закэширован)
   const resp = await fetch(GITHUB_RAW_BUST + Date.now(), { headers: { 'User-Agent': 'swarm-cache-node' } });
   if (!resp.ok) throw new Error('GitHub pull HTTP ' + resp.status);
   const remote = await resp.json();
   if (!Array.isArray(remote)) throw new Error('bad remote format');
   return remote;
 }
-async function pushToGitHub(db) {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) throw new Error('GITHUB_TOKEN not set — push skipped');
+async function pushToGitHub(db, cfg) {
+  const token = cfg.githubToken;
+  if (!token) throw new Error('githubToken не задан — push пропущен (config set githubToken <токен>)');
   const body = JSON.stringify(db);
-  const sha = await getRemoteSha();
+  const sha = await getRemoteSha(cfg);
   const resp = await fetch(GITHUB_API, {
     method: 'PUT',
     headers: { 'Authorization': 'token ' + token, 'Content-Type': 'application/json', 'User-Agent': 'swarm-cache-node' },
@@ -133,8 +127,8 @@ async function pushToGitHub(db) {
   if (!resp.ok) throw new Error('GitHub push HTTP ' + resp.status + ' ' + await resp.text());
   return true;
 }
-async function getRemoteSha() {
-  const token = process.env.GITHUB_TOKEN;
+async function getRemoteSha(cfg) {
+  const token = cfg.githubToken;
   if (!token) return null;
   const resp = await fetch(GITHUB_API, { headers: { 'Authorization': 'token ' + token, 'User-Agent': 'swarm-cache-node' } });
   if (!resp.ok) return null;
@@ -154,28 +148,26 @@ function merge(remote, local) {
 }
 
 /* ---- команды ---- */
-async function cmdRegister(name) {
-  const cfg = loadConfig();
-  const finalName = name || cfg.name || process.env.USER || 'openclaw-user';
+async function cmdRegister(name, cfg) {
+  const finalName = name || cfg.name || os.userInfo().username || 'openclaw-user';
   cfg.name = finalName;
   cfg.key = cfg.key || 'node-' + crypto.randomBytes(8).toString('hex');
   cfg.created = cfg.created || Date.now();
   saveConfig(cfg);
-  // стартовый pull
   try {
-    const remote = await pullFromGitHub();
+    const remote = await pullFromGitHub(cfg);
     const db = merge(remote, loadDb());
     saveDb(db);
-    console.log(`✅ Узел зарегистрирован: ${finalName} (key=${cfg.key})`);
+    console.log(`✅ Узел зарегистрирован: ${finalName}`);
     console.log(`   База: ${db.length} ответов роя (синхронизировано с GitHub)`);
   } catch (e) {
-    console.log(`✅ Узел зарегистрирован: ${finalName} (key=${cfg.key})`);
+    console.log(`✅ Узел зарегистрирован: ${finalName}`);
     console.log(`   ⚠ GitHub недоступен: ${e.message}. База: ${loadDb().length} локальных ответов`);
   }
   return cfg;
 }
 
-async function cmdAsk(q) {
+async function cmdAsk(q, cfg) {
   const hit = searchLocal(q);
   if (hit) {
     console.log(`[CACHED ${hit.match}${hit.score ? ' ' + hit.score + '%' : ''}]`);
@@ -183,9 +175,8 @@ async function cmdAsk(q) {
     console.log(hit.a);
     return hit;
   }
-  // промах: пробуем генерацию через LLM пользователя
   console.log('[MISS] нет в базе роя');
-  const ans = await generate(q).catch(e => { console.error('⚠ LLM: ' + e.message); return null; });
+  const ans = await generate(q, cfg).catch(e => { console.error('⚠ LLM: ' + e.message); return null; });
   if (ans) {
     console.log('---');
     console.log(ans);
@@ -195,32 +186,30 @@ async function cmdAsk(q) {
   return null;
 }
 
-async function cmdPublish(q, a) {
+async function cmdPublish(q, a, cfg) {
   const db = loadDb();
   const h = qhash(q);
   if (db.some(r => qhash(r.q) === h)) { console.log('⏭ Дубль — уже есть в базе'); return; }
   db.push({ q, a, ts: Math.floor(Date.now() / 1000) });
   saveDb(db);
   console.log(`✅ Добавлено в локальную базу (всего ${db.length})`);
-  // пытаемся вернуть в общий репо
   try {
-    await pushToGitHub(db);
+    await pushToGitHub(db, cfg);
     console.log('   Пуш в общий репо: OK');
   } catch (e) {
     console.log(`   Пуш в общий репо: пропущен (${e.message})`);
-    console.log('   (задайте GITHUB_TOKEN, чтобы возвращать ответы рою)');
   }
 }
 
-async function cmdSync() {
+async function cmdSync(cfg) {
   const local = loadDb();
-  const remote = await pullFromGitHub().catch(e => { console.error('⚠ pull: ' + e.message); return null; });
+  const remote = await pullFromGitHub(cfg).catch(e => { console.error('⚠ pull: ' + e.message); return null; });
   if (remote) {
     const merged = merge(remote, local);
     saveDb(merged);
     console.log(`✅ Синхронизировано: ${merged.length} ответов (было локально ${local.length})`);
     if (merged.length > remote.length) {
-      try { await pushToGitHub(merged); console.log('   Новые ответы вернулись в общий репо'); }
+      try { await pushToGitHub(merged, cfg); console.log('   Новые ответы вернулись в общий репо'); }
       catch (e) { console.log('   ⚠ push: ' + e.message); }
     }
   } else {
@@ -228,16 +217,34 @@ async function cmdSync() {
   }
 }
 
-async function cmdBalance() {
-  const cfg = loadConfig();
+function cmdConfig(args, cfg) {
+  if (args.length < 2) {
+    console.log('Текущий конфиг (~/.swarm-cache/config.json):');
+    const show = { ...cfg };
+    if (show.llmKey) show.llmKey = '***';
+    if (show.githubToken) show.githubToken = '***';
+    console.log(JSON.stringify(show, null, 2));
+    console.log('\nУстановка: node swarm.mjs config set <поле> <значение>');
+    console.log('Поля: name, llmUrl, llmKey, llmModel, githubToken');
+    return;
+  }
+  const [field, value] = args;
+  const allowed = ['name', 'llmUrl', 'llmKey', 'llmModel', 'githubToken'];
+  if (!allowed.includes(field)) { console.error('❌ Неизвестное поле: ' + field); process.exitCode = 1; return; }
+  cfg[field] = value;
+  saveConfig(cfg);
+  console.log(`✅ ${field} сохранён`);
+}
+
+async function cmdBalance(cfg) {
   const db = loadDb();
   console.log(`Узел: ${cfg.name || 'не зарегистрирован'} | key: ${cfg.key || '-'}`);
   console.log(`Локальная база: ${db.length} ответов`);
   console.log(`Режим: GitHub-рой (без сервера)`);
-  if (process.env.LLM_API_URL) console.log(`LLM: ${process.env.LLM_MODEL || 'default'} (ваш ключ)`);
-  else console.log('LLM: не настроена (env LLM_API_URL/LLM_API_KEY) — только поиск по базе');
-  if (process.env.GITHUB_TOKEN) console.log('GitHub push: включён (ответы возвращаются рою)');
-  else console.log('GitHub push: выключен (задайте GITHUB_TOKEN для возврата ответов)');
+  if (cfg.llmUrl && cfg.llmKey) console.log(`LLM: ${cfg.llmModel || 'default'} (ваш ключ)`);
+  else console.log('LLM: не настроена (config set llmUrl/llmKey) — только поиск по базе');
+  if (cfg.githubToken) console.log('GitHub push: включён (ответы возвращаются рою)');
+  else console.log('GitHub push: выключен (config set githubToken для возврата ответов)');
 }
 
 async function cmdStats() {
@@ -249,19 +256,21 @@ async function cmdStats() {
 const [, , cmd, ...args] = process.argv;
 const main = async () => {
   try {
+    const cfg = loadConfig();
     switch (cmd) {
-      case 'register': await cmdRegister(args[0]); break;
-      case 'ask': await cmdAsk(args.join(' ').trim()); break;
+      case 'register': await cmdRegister(args[0], cfg); break;
+      case 'ask': await cmdAsk(args.join(' ').trim(), cfg); break;
       case 'publish': {
         if (args.length < 2) throw new Error('Нужно: publish "вопрос" "ответ"');
-        await cmdPublish(args[0], args.slice(1).join(' '));
+        await cmdPublish(args[0], args.slice(1).join(' '), cfg);
         break;
       }
-      case 'sync': await cmdSync(); break;
-      case 'balance': await cmdBalance(); break;
+      case 'sync': await cmdSync(cfg); break;
+      case 'config': cmdConfig(args, cfg); break;
+      case 'balance': await cmdBalance(cfg); break;
       case 'stats': await cmdStats(); break;
       default:
-        console.log('Swarm Cache узел (без сервера)\n  register [имя] | ask "вопрос" | publish "вопрос" "ответ" | sync | balance | stats');
+        console.log('Swarm Cache узел (без сервера)\n  register [имя] | ask "вопрос" | publish "вопрос" "ответ" | sync | config | balance | stats');
     }
   } catch (e) {
     console.error('❌ ' + e.message);

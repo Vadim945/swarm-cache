@@ -6,6 +6,25 @@
 
 **Живое демо:** https://swarm.telscan.ru (self-serve: ввёл имя → получил API-ключ + 10 ед бонуса)
 
+## 🚀 Скилл для OpenClaw — установка одной командой
+
+**Рой без сервера:** скилл-узел синхронизирует общую базу ответов через GitHub, поиск идёт локально, генерация — через твой LLM-ключ. Каждый установивший = новая нода роя.
+
+```bash
+openclaw skills install git:Vadim945/openclaw-swarm-cache
+```
+
+Или скажи своему агенту: *«установи скилл по ссылке https://github.com/Vadim945/openclaw-swarm-cache»*.
+
+После установки:
+
+```bash
+node ~/.openclaw/workspace/skills/swarm-cache/swarm.mjs register "Твоё имя"
+node ~/.openclaw/workspace/skills/swarm-cache/swarm.mjs ask "вопрос"
+```
+
+Отдельный репо скилла: https://github.com/Vadim945/openclaw-swarm-cache
+
 ## Возможности
 
 | Возможность | Детали |
